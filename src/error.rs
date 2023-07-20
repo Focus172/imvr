@@ -72,10 +72,6 @@ pub struct NoSuitableAdapterFound;
 pub enum SaveImageError {
 	/// An I/O error occured.
 	IoError(std::io::Error),
-
-	/// An error occured encoding the PNG image.
-	#[cfg(feature = "png")]
-	PngError(png::EncodingError),
 }
 
 impl From<winit::error::OsError> for CreateWindowError {

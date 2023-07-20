@@ -107,9 +107,8 @@ pub struct ArcImage {
 	data: Arc<[u8]>,
 }
 
-impl Image {
-	/// Get a non-owning view of the image data.
-	pub fn as_image_view(&self) -> Result<ImageView, ImageDataError> {
+impl AsImageView for Image {
+	fn as_image_view(&self) -> Result<ImageView, ImageDataError> {
 		match self {
 			Self::Box(x) => Ok(x.as_view()),
 			Self::Arc(x) => Ok(x.as_view()),
@@ -117,12 +116,6 @@ impl Image {
 			Self::ArcDyn(x) => x.as_image_view(),
 			Self::Invalid(e) => Err(e.clone()),
 		}
-	}
-}
-
-impl AsImageView for Image {
-	fn as_image_view(&self) -> Result<ImageView, ImageDataError> {
-		self.as_image_view()
 	}
 }
 

@@ -1,5 +1,6 @@
 use crate::ContextHandle;
 use crate::Image;
+use crate::image::AsImageView;
 use crate::WindowHandle;
 use crate::WindowId;
 use crate::error::{InvalidWindowId, SetImageError};

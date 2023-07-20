@@ -48,29 +48,6 @@ fn initialize_context_or_exit() -> Context {
 	}
 }
 
-/// Initialize and run the global context and spawn a user task in a new thread.
-///
-/// This function never returns.
-/// Once the user task finishes, the program exits with status code 0.
-/// Any background threads spawned by `show-image` will be joined before the process exits.
-/// It is the responsibility of the user code to join any manually spawned tasks.
-///
-/// The user task can call the [`context()`] function to obtain a [`ContextProxy`],
-/// or the [`create_window()`] function to create a new window directly.
-///
-/// If the `macros` feature is enabled, you can also wrap your main function with the [`main`][crate::main] macro
-/// instead of manually calling this function.
-///
-/// It is also possible to run a user task in the same thread as the context.
-/// See [`run_context_with_local_task()`] for more details.
-///
-/// # Panics
-/// This function panics if initialization of the global context fails.
-/// See [`try_run_context`] for a variant that allows the user task to handle these initialization errors.
-///
-/// This function also panics if it is called from any thread other than the main thread.
-/// Some platforms like OS X require all GUI code to run in the main thread.
-/// To ensure portability, this restriction is also enforced on other platforms.
 pub fn run_context<F, R>(user_task: F) -> !
 where
 	F: FnOnce() -> R + Send + 'static,
@@ -91,54 +68,7 @@ where
 		}
 	});
 
-	context.run();
-}
-
-/// Initialize and run the global context and spawn a user task in a new thread.
-///
-/// This function is almost identical to [`run_context`],
-/// except that it allows the user task to handle initialization errors.
-/// If the initialization of the global context fails, the user task will be executed in the calling thread.
-/// If initialization succeeds, the user task is started in a newly spawned thread.
-///
-/// Whether or not initialization succeeded, the process will exit once the user task returns.
-/// Any background threads spawned by `show-image` will be joined before the process exits.
-/// It is the responsibility of the user code to join any manually spawned tasks.
-///
-/// It is also possible to run a user task in the same thread as the context.
-/// See [`try_run_context_with_local_task()`] for more details.
-///
-/// # Panics
-/// This function panics if it is called from any thread other than the main thread.
-/// Some platforms like OS X require all GUI code to run in the main thread.
-/// To ensure portability, this restriction is also enforced on other platforms.
-pub fn try_run_context<F, R>(user_task: F) -> !
-where
-	F: FnOnce(Result<(), error::GetDeviceError>) -> R + Send + 'static,
-	R: std::process::Termination,
-{
-	let context = match initialize_context() {
-		Ok(x) => x,
-		Err(e) => {
-			let termination = (user_task)(Err(e));
-			termination.report().exit_process()
-		},
-	};
-
-	// Spawn the user task.
-	std::thread::spawn(move || {
-		match catch_unwind(AssertUnwindSafe(move || user_task(Ok(())))) {
-			Ok(termination) => exit(termination.report()),
-			Err(_) => {
-				// Make sure the main thread panics too.
-				crate::context().run_function(move |_| {
-					panic!("show-image: main user task panicked");
-				});
-			},
-		}
-	});
-
-	context.run();
+	context.run()
 }
 
 /// Initialize and run the global context and run a user task, both in the main thread.
