@@ -79,7 +79,8 @@ impl_from_variant!(Event::WindowEvent(WindowEvent));
 impl_from_variant!(Event::DeviceEvent(DeviceEvent));
 
 /// Keyboard input.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
+// #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug)]
 pub struct KeyboardInput {
 	/// Scan code of the physical key.
 	///
@@ -109,18 +110,6 @@ pub enum Theme {
 	Dark,
 }
 
-impl Theme {
-	/// Check if the theme is light.
-	pub fn is_light(self) -> bool {
-		self == Self::Light
-	}
-
-	/// Check if the theme is dark.
-	pub fn is_dark(self) -> bool {
-		self == Self::Dark
-	}
-}
-
 /// State of a button or key.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum ElementState {
@@ -129,18 +118,6 @@ pub enum ElementState {
 
 	/// The button or key is released.
 	Released,
-}
-
-impl ElementState {
-	/// Check if the button or key is pressed.
-	pub fn is_pressed(self) -> bool {
-		self == Self::Pressed
-	}
-
-	/// Check if the button or key is released.
-	pub fn is_released(self) -> bool {
-		self == Self::Released
-	}
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -159,28 +136,6 @@ pub enum MouseButton {
 	Other(u16),
 }
 
-impl MouseButton {
-	/// Check if the button is the left mouse button.
-	pub fn is_left(self) -> bool {
-		self == Self::Left
-	}
-
-	/// Check if the button is the right mouse button.
-	pub fn is_right(self) -> bool {
-		self == Self::Right
-	}
-
-	/// Check if the button is the middle mouse button.
-	pub fn is_middle(self) -> bool {
-		self == Self::Middle
-	}
-
-	/// Check if the button is a specific other button.
-	pub fn is_other(self, other: u16) -> bool {
-		self == Self::Other(other)
-	}
-}
-
 /// The state of all mouse buttons.
 #[derive(Debug, Clone, Default)]
 pub struct MouseButtonState {
@@ -192,11 +147,6 @@ impl MouseButtonState {
 	/// Check if a button is pressed.
 	pub fn is_pressed(&self, button: MouseButton) -> bool {
 		self.buttons.get(&button).is_some()
-	}
-
-	/// Iterate over all pressed buttons.
-	pub fn iter_pressed(&self) -> impl Iterator<Item = MouseButton> + '_ {
-		self.buttons.iter().copied()
 	}
 
 	/// Mark a button as pressed or unpressed.

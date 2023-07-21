@@ -178,36 +178,6 @@ impl Context {
 		})
 	}
 
-	/// Add a global event handler.
-	pub fn add_event_handler<F>(&mut self, handler: F)
-	where
-		F: 'static + FnMut(&mut ContextHandle, &mut Event, &mut EventHandlerControlFlow),
-	{
-		self.event_handlers.push(Box::new(handler))
-	}
-
-	/// Run the event loop of the context.
-	///
-	/// This function must be run from the main thread and never returns.
-	///
-	/// Not all platforms have this restriction,
-	/// but for portability reasons it is enforced on all platforms.
-	pub fn run(mut self) -> ! {
-		let event_loop = self.event_loop.take().unwrap();
-		event_loop.run(move |event, event_loop, control_flow| {
-			let initial_window_count = self.windows.len();
-			self.handle_event(event, event_loop, control_flow);
-
-			// Check if the event handlers caused the last window(s) to close.
-			// If so, generate an AllWIndowsClosed event for the event handlers.
-			if self.windows.is_empty() && initial_window_count > 0 {
-				self.run_event_handlers(&mut Event::AllWindowsClosed, event_loop);
-				if self.exit_with_last_window {
-					self.exit(0.into());
-				}
-			}
-		});
-	}
 }
 
 impl<'a> ContextHandle<'a> {
@@ -233,11 +203,6 @@ impl<'a> ContextHandle<'a> {
 		self.context.proxy.clone()
 	}
 
-	/// Exit the program when the last window closes.
-	pub fn set_exit_with_last_window(&mut self, exit_with_last_window: bool) {
-		self.context.exit_with_last_window = exit_with_last_window;
-	}
-
 	/// Get a window handle for the given window ID.
 	pub fn window(&mut self, window_id: WindowId) -> Result<WindowHandle, InvalidWindowId> {
 		let index = self.context.windows.iter().position(|x| x.id() == window_id).ok_or(InvalidWindowId { window_id })?;
@@ -248,28 +213,6 @@ impl<'a> ContextHandle<'a> {
 	pub fn create_window(&mut self, title: impl Into<String>, options: WindowOptions) -> Result<WindowHandle, CreateWindowError> {
 		let index = self.context.create_window(self.event_loop, title, options)?;
 		Ok(WindowHandle::new(self.reborrow(), index, None))
-	}
-
-	/// Add a global event handler.
-	pub fn add_event_handler<F>(&mut self, handler: F)
-	where
-		F: 'static + FnMut(&mut ContextHandle, &mut Event, &mut EventHandlerControlFlow),
-	{
-		self.context.add_event_handler(handler);
-	}
-
-	/// Run a task in a background thread and register it with the context.
-	///
-	/// The task will be executed in a different thread than the context.
-	/// Currently, each task is spawned in a separate thread.
-	/// In the future, tasks may be run in a dedicated thread pool.
-	///
-	/// The background task will be joined before the process is terminated when you use [`Self::exit()`] or one of the other exit functions of this crate.
-	pub fn run_background_task<F>(&mut self, task: F)
-	where
-		F: FnOnce() + Send + 'static,
-	{
-		self.context.run_background_task(task);
 	}
 
 	/// Join all background tasks and then exit the process.
@@ -558,14 +501,6 @@ impl Context {
 		}
 
 		!stop_propagation && !window_destroyed
-	}
-
-	/// Run a background task in a separate thread.
-	fn run_background_task<F>(&mut self, task: F)
-	where
-		F: FnOnce() + Send + 'static,
-	{
-		self.background_tasks.push(BackgroundThread::new(task))
 	}
 
 	/// Clean-up finished background tasks.
