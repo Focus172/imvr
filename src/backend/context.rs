@@ -13,7 +13,7 @@ use crate::error::NoSuitableAdapterFound;
 use crate::event::{self, Event, EventHandlerControlFlow, WindowEvent};
 use crate::ContextProxy;
 use crate::ImageView;
-use crate::WindowHandle;
+use crate::backend::window::WindowHandle;
 use crate::WindowId;
 use crate::WindowOptions;
 use glam::Affine2;
@@ -44,7 +44,7 @@ impl From<crate::Color> for wgpu::Color {
 	}
 }
 
-pub(crate) struct GpuContext {
+pub struct GpuContext {
 	/// The wgpu device to use.
 	pub device: wgpu::Device,
 
@@ -63,7 +63,7 @@ pub(crate) struct GpuContext {
 }
 
 /// The global context managing all windows and the main event loop.
-pub(crate) struct Context {
+pub struct Context {
 	/// Marker to make context !Send.
 	pub unsend: std::marker::PhantomData<*const ()>,
 
@@ -427,7 +427,7 @@ impl Context {
 	}
 
 	/// Handle an event from the event loop.
-	fn handle_event(
+	pub fn handle_event(
 		&mut self,
 		event: winit::event::Event<ContextFunction>,
 		event_loop: &EventLoopWindowTarget,
@@ -497,7 +497,7 @@ impl Context {
 	}
 
 	/// Run global event handlers.
-	fn run_event_handlers(&mut self, event: &mut Event, event_loop: &EventLoopWindowTarget) {
+	pub fn run_event_handlers(&mut self, event: &mut Event, event_loop: &EventLoopWindowTarget) {
 		use super::util::RetainMut;
 
 		// Event handlers could potentially modify the list of event handlers.
@@ -581,7 +581,7 @@ impl Context {
 	}
 
 	/// Join all background tasks and then exit the process.
-	fn exit(&mut self, code: ExitCode) -> ! {
+	pub fn exit(&mut self, code: ExitCode) -> ! {
 		self.join_background_tasks();
         code.exit_process()
 	}

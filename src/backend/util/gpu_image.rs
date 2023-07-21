@@ -1,6 +1,6 @@
 use crate::ImageInfo;
 use crate::ImageView;
-use crate::{Alpha, PixelFormat};
+use crate::image_info::{Alpha, PixelFormat};
 use super::buffer::create_buffer_with_value;
 
 /// A GPU image buffer ready to be used with the rendering pipeline.

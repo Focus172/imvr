@@ -4,7 +4,7 @@ use crate::ImageInfo;
 use crate::ImageView;
 use crate::WindowId;
 use crate::WindowProxy;
-use crate::backend::Context;
+use crate::backend::context::Context;
 use crate::backend::util::GpuImage;
 use crate::backend::util::UniformsBuffer;
 use crate::error;
@@ -18,7 +18,7 @@ use indexmap::IndexMap;
 type DynWindowEventHandler = dyn FnMut(WindowHandle, &mut WindowEvent, &mut EventHandlerControlFlow);
 
 /// Window capable of displaying images using wgpu.
-pub(crate) struct Window {
+pub struct Window {
 	/// The winit window.
 	pub window: winit::window::Window,
 
@@ -50,7 +50,7 @@ pub(crate) struct Window {
 }
 
 /// An overlay added to a window.
-pub(crate) struct Overlay {
+pub struct Overlay {
 	/// The image to show.
 	pub image: GpuImage,
 
@@ -605,7 +605,7 @@ impl Window {
 
 /// The window specific uniforms for the render pipeline.
 #[derive(Debug, Copy, Clone)]
-pub(crate) struct WindowUniforms {
+pub struct WindowUniforms {
 	/// The transformation applied to the image.
 	///
 	/// With the identity transform, the image is stretched to the inner window size,
