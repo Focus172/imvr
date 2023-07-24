@@ -9,13 +9,8 @@ mod image;
 mod image_info;
 mod oneshot;
 
-use crate::backend::{
-    context::Context,
-    proxy::{ContextProxy, WindowProxy},
-    window::WindowOptions,
-};
+use crate::backend::{context::Context, window::WindowOptions};
 use crate::color::Color;
-use crate::event::Event;
 use crate::image::ImageView;
 use crate::image_info::ImageInfo;
 
@@ -79,7 +74,7 @@ fn main() {
         // Check if the event handlers caused the last window(s) to close.
         // If so, generate an AllWIndowsClosed event for the event handlers.
         if context.windows.is_empty() {
-            context.run_event_handlers(&mut Event::AllWindowsClosed, event_loop);
+            // context.run_event_handlers(&mut Event::AllWindowsClosed, event_loop);
             context.exit(0.into());
         }
     });

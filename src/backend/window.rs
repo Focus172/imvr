@@ -1,20 +1,10 @@
-use crate::backend::context::Context;
-use crate::backend::context::ContextHandle;
 use crate::backend::util::GpuImage;
 use crate::backend::util::UniformsBuffer;
-use crate::event::EventHandlerControlFlow;
-use crate::event::WindowEvent;
 use crate::Color;
-use crate::ImageView;
 use crate::WindowId;
-use crate::WindowProxy;
 use glam::Vec3;
 use glam::{Affine2, Vec2};
 use indexmap::IndexMap;
-
-/// Internal shorthand for window event handlers.
-type DynWindowEventHandler =
-    dyn FnMut(WindowHandle, &mut WindowEvent, &mut EventHandlerControlFlow);
 
 /// Window capable of displaying images using wgpu.
 pub struct Window {
@@ -43,9 +33,8 @@ pub struct Window {
     ///
     /// Virtual window space goes from (0, 0) in the top left to (1, 1) in the bottom right.
     pub user_transform: Affine2,
-
-    /// The event handlers for this specific window.
-    pub event_handlers: Vec<Box<DynWindowEventHandler>>,
+    // The event handlers for this specific window.
+    // pub event_handlers: Vec<Box<DynWindowEventHandler>>,
 }
 
 /// An overlay added to a window.
@@ -55,137 +44,6 @@ pub struct Overlay {
 
     /// If true, show the overlay, otherwise do not.
     pub visible: bool,
-}
-
-/// Handle to a window.
-///
-/// A [`WindowHandle`] can be used to interact with a window from within the global context thread.
-/// To interact with a window from another thread, you need a [`WindowProxy`].
-pub struct WindowHandle<'a> {
-    /// The context handle to use.
-    context_handle: ContextHandle<'a>,
-
-    /// The index of the window in [`Context::windows`].
-    index: usize,
-    /// Flag to signal to the handle creator that the window was destroyed.
-    destroy_flag: Option<&'a mut bool>,
-}
-
-impl<'a> WindowHandle<'a> {
-    /// Create a new window handle from a context handle and a window ID.
-    pub fn new(
-        context_handle: ContextHandle<'a>,
-        index: usize,
-        destroy_flag: Option<&'a mut bool>,
-    ) -> Self {
-        Self {
-            context_handle,
-            index,
-            destroy_flag,
-        }
-    }
-
-    /// Get a reference to the context.
-    pub fn context(&self) -> &Context {
-        self.context_handle().context
-    }
-
-    /// Get a mutable reference to the context.
-    ///
-    /// # Safety
-    /// The current window may not be moved or removed through the returned reference.
-    /// In practise, this means that you may not create or destroy any windows.
-    unsafe fn context_mut(&mut self) -> &mut Context {
-        self.context_handle.context
-    }
-
-    /// Get a reference to the window.
-    fn window(&self) -> &Window {
-        &self.context().windows[self.index]
-    }
-
-    /// Get a mutable reference to the window.
-    pub fn window_mut(&mut self) -> &mut Window {
-        let index = self.index;
-        unsafe { &mut self.context_mut().windows[index] }
-    }
-
-    /// Get the window ID.
-    pub fn id(&self) -> WindowId {
-        self.window().id()
-    }
-
-    /// Get a proxy object for the window to interact with it from a different thread.
-    ///
-    /// You should not use proxy objects from withing the global context thread.
-    /// The proxy objects often wait for the global context to perform some action.
-    /// Doing so from within the global context thread would cause a deadlock.
-    pub fn proxy(&self) -> WindowProxy {
-        WindowProxy::new(self.id(), self.context_handle.proxy())
-    }
-
-    /// Get a reference to the context handle.
-    ///
-    /// If you need mutable access to the context, use [`release()`](Self::release) instead.
-    pub fn context_handle(&self) -> &ContextHandle<'a> {
-        &self.context_handle
-    }
-
-    /// Get the inner size of the window in physical pixels.
-    ///
-    /// This returns the size of the window contents, excluding borders, the title bar and other decorations.
-    pub fn inner_size(&self) -> glam::UVec2 {
-        let size = self.window().window.inner_size();
-        glam::UVec2::new(size.width, size.height)
-    }
-
-    /// Set the image to display on the window.
-    pub fn set_image(&mut self, name: impl Into<String>, image: &ImageView) {
-        let image = self.context().make_gpu_image(name, image);
-        self.window_mut().image = Some(image);
-        self.window_mut().uniforms.mark_dirty(true);
-        self.window_mut().window.request_redraw();
-    }
-
-    /// Get the image transformation.
-    ///
-    /// The image transformation is applied to the image and all overlays in virtual window space.
-    ///
-    /// Virtual window space goes from `(0, 0)` in the top left corner of the window to `(1, 1)` in the bottom right corner.
-    ///
-    /// This transformation does not include scaling introduced by the [`Self::preserve_aspect_ratio()`] property.
-    /// Use [`Self::effective_transform()`] if you need that.
-    pub fn transform(&self) -> Affine2 {
-        self.window().user_transform
-    }
-
-    /// Set the image transformation to a value.
-    ///
-    /// The image transformation is applied to the image and all overlays in virtual window space.
-    ///
-    /// Virtual window space goes from `(0, 0)` in the top left corner of the window to `(1, 1)` in the bottom right corner.
-    ///
-    /// This transformation should not include any scaling related to the [`Self::preserve_aspect_ratio()`] property.
-    pub fn set_transform(&mut self, transform: Affine2) {
-        self.window_mut().user_transform = transform;
-        self.window_mut().uniforms.mark_dirty(true);
-        self.window().window.request_redraw();
-    }
-
-    /// Pre-apply a transformation to the existing image transformation.
-    ///
-    /// This is equivalent to:
-    /// ```
-    /// # use show_image::{glam::Affine2, WindowHandle};
-    /// # fn foo(window: &mut WindowHandle, transform: Affine2) {
-    /// window.set_transform(transform * window.transform())
-    /// # }
-    /// ```
-    ///
-    /// See [`Self::set_transform`] for more information about the image transformation.
-    pub fn pre_apply_transform(&mut self, transform: Affine2) {
-        self.set_transform(transform * self.transform());
-    }
 }
 
 /// Options for creating a new window.
@@ -426,41 +284,5 @@ unsafe impl crate::backend::util::ToStd140 for WindowUniforms {
             image_size: self.image_size.into(),
             transform: self.transform.into(),
         }
-    }
-}
-
-/// Event handler that implements the default controls.
-pub(super) fn default_controls_handler(
-    mut window: WindowHandle,
-    event: &mut crate::event::WindowEvent,
-    _control_flow: &mut crate::event::EventHandlerControlFlow,
-) {
-    match event {
-        WindowEvent::MouseWheel(event) => {
-            let delta = match event.delta {
-                winit::event::MouseScrollDelta::LineDelta(_x, y) => y,
-                winit::event::MouseScrollDelta::PixelDelta(delta) => delta.y as f32 / 20.0,
-            };
-            let scale = 1.1f32.powf(delta);
-
-            let origin = event
-                .position
-                .map(|pos| pos / window.inner_size().as_vec2())
-                .unwrap_or_else(|| glam::Vec2::new(0.5, 0.5));
-            let transform = glam::Affine2::from_scale_angle_translation(
-                glam::Vec2::splat(scale),
-                0.0,
-                origin - scale * origin,
-            );
-            window.pre_apply_transform(transform);
-        }
-        WindowEvent::MouseMove(event) => {
-            if event.buttons.is_pressed(crate::event::MouseButton::Left) {
-                let translation =
-                    (event.position - event.prev_position) / window.inner_size().as_vec2();
-                window.pre_apply_transform(Affine2::from_translation(translation));
-            }
-        }
-        _ => (),
     }
 }

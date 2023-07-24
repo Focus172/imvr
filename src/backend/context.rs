@@ -1,38 +1,20 @@
-use crate::backend::proxy::ContextFunction;
 use crate::backend::util::GpuImage;
 use crate::backend::util::{ToStd140, UniformsBuffer};
 use crate::backend::window::Window;
-use crate::backend::window::WindowHandle;
 use crate::backend::window::WindowUniforms;
 use crate::background_thread::BackgroundThread;
 use crate::error::CreateWindowError;
 use crate::error::GetDeviceError;
 use crate::error::InvalidWindowId;
 use crate::error::NoSuitableAdapterFound;
-use crate::event::{self, Event, EventHandlerControlFlow, WindowEvent};
-use crate::ContextProxy;
+use crate::event::{Event, WindowEvent};
 use crate::ImageView;
 use crate::WindowId;
 use crate::WindowOptions;
 use core::num::NonZeroU64;
 use glam::Affine2;
 use std::process::ExitCode;
-
-/// Internal shorthand type-alias for the correct [`winit::event_loop::EventLoop`].
-///
-/// Not for use in public APIs.
-type EventLoop = winit::event_loop::EventLoop<ContextFunction>;
-
-/// Internal shorthand for context event handlers.
-///
-/// Not for use in public APIs.
-type DynContextEventHandler =
-    dyn FnMut(&mut ContextHandle, &mut Event, &mut event::EventHandlerControlFlow);
-
-/// Internal shorthand type-alias for the correct [`winit::event_loop::EventLoopWindowTarget`].
-///
-/// Not for use in public APIs.
-type EventLoopWindowTarget = winit::event_loop::EventLoopWindowTarget<ContextFunction>;
+use winit::event_loop::{EventLoop, EventLoopWindowTarget};
 
 impl From<crate::Color> for wgpu::Color {
     fn from(other: crate::Color) -> Self {
@@ -77,10 +59,7 @@ pub struct Context {
     ///
     /// Running the event loop consumes it,
     /// so from that point on this field is `None`.
-    pub event_loop: Option<EventLoop>,
-
-    /// A proxy object to clone for new requests.
-    pub proxy: ContextProxy,
+    pub event_loop: Option<EventLoop<()>>,
 
     /// The swap chain format to use.
     pub swap_chain_format: wgpu::TextureFormat,
@@ -94,20 +73,8 @@ pub struct Context {
     /// If true, exit the program when the last window closes.
     pub exit_with_last_window: bool,
 
-    /// The global event handlers.
-    pub event_handlers: Vec<Box<DynContextEventHandler>>,
-
     /// Background tasks, like saving images.
     pub background_tasks: Vec<BackgroundThread<()>>,
-}
-
-/// Handle to the global context.
-///
-/// You can interact with the global context through a [`ContextHandle`] only from the global context thread.
-/// To interact with the context from a different thread, use a [`ContextProxy`].
-pub struct ContextHandle<'a> {
-    pub(crate) context: &'a mut Context,
-    pub(crate) event_loop: &'a EventLoopWindowTarget,
 }
 
 impl GpuContext {
@@ -164,82 +131,21 @@ impl Context {
             backends: select_backend(),
             dx12_shader_compiler: Default::default(),
         });
-        let event_loop = winit::event_loop::EventLoopBuilder::with_user_event().build();
-        let proxy = ContextProxy::new(event_loop.create_proxy(), std::thread::current().id());
+
+        //let event_loop = winit::event_loop::EventLoopBuilder::with_user_event().build();
+        let event_loop = winit::event_loop::EventLoop::new();
 
         Ok(Self {
             unsend: Default::default(),
             instance,
             gpu: None,
             event_loop: Some(event_loop),
-            proxy,
             swap_chain_format,
             windows: Vec::new(),
             mouse_cache: Default::default(),
             exit_with_last_window: false,
-            event_handlers: Vec::new(),
             background_tasks: Vec::new(),
         })
-    }
-}
-
-impl<'a> ContextHandle<'a> {
-    /// Create a new context handle.
-    fn new(context: &'a mut Context, event_loop: &'a EventLoopWindowTarget) -> Self {
-        Self {
-            context,
-            event_loop,
-        }
-    }
-
-    /// Reborrow self with a shorter lifetime.
-    pub fn reborrow(&mut self) -> ContextHandle {
-        ContextHandle {
-            context: self.context,
-            event_loop: self.event_loop,
-        }
-    }
-
-    /// Get a proxy for the context to interact with it from a different thread.
-    ///
-    /// You should not use proxy objects from withing the global context thread.
-    /// The proxy objects often wait for the global context to perform some action.
-    /// Doing so from within the global context thread would cause a deadlock.
-    pub fn proxy(&self) -> ContextProxy {
-        self.context.proxy.clone()
-    }
-
-    /// Get a window handle for the given window ID.
-    pub fn window(&mut self, window_id: WindowId) -> Result<WindowHandle, InvalidWindowId> {
-        let index = self
-            .context
-            .windows
-            .iter()
-            .position(|x| x.id() == window_id)
-            .ok_or(InvalidWindowId { window_id })?;
-        Ok(WindowHandle::new(self.reborrow(), index, None))
-    }
-
-    /// Create a new window.
-    pub fn create_window(
-        &mut self,
-        title: impl Into<String>,
-        options: WindowOptions,
-    ) -> Result<WindowHandle, CreateWindowError> {
-        let index = self
-            .context
-            .create_window(self.event_loop, title, options)?;
-        Ok(WindowHandle::new(self.reborrow(), index, None))
-    }
-
-    /// Join all background tasks and then exit the process.
-    ///
-    /// If you use [`std::process::exit`], running background tasks may be killed.
-    /// To ensure no data loss occurs, you should use this function instead.
-    ///
-    /// Background tasks are spawned when an image is saved through the built-in Ctrl+S or Ctrl+Shift+S shortcut, or by user code.
-    pub fn exit(&mut self, code: ExitCode) -> ! {
-        self.context.exit(code);
     }
 }
 
@@ -247,7 +153,7 @@ impl Context {
     /// Create a window.
     pub fn create_window(
         &mut self,
-        event_loop: &EventLoopWindowTarget,
+        event_loop: &EventLoopWindowTarget<()>,
         title: impl Into<String>,
         options: WindowOptions,
     ) -> Result<usize, CreateWindowError> {
@@ -295,16 +201,11 @@ impl Context {
             image: None,
             user_transform: Affine2::IDENTITY,
             overlays: Default::default(),
-            event_handlers: Vec::new(),
+            // event_handlers: Vec::new(),
         };
 
         self.windows.push(window);
         let index = self.windows.len() - 1;
-        if options.default_controls {
-            self.windows[index]
-                .event_handlers
-                .push(Box::new(super::window::default_controls_handler));
-        }
         Ok(index)
     }
 
@@ -412,8 +313,8 @@ impl Context {
     /// Handle an event from the event loop.
     pub fn handle_event(
         &mut self,
-        event: winit::event::Event<ContextFunction>,
-        event_loop: &EventLoopWindowTarget,
+        event: winit::event::Event<()>,
+        event_loop: &EventLoopWindowTarget<()>,
         control_flow: &mut winit::event_loop::ControlFlow,
     ) {
         *control_flow = winit::event_loop::ControlFlow::Wait;
@@ -422,8 +323,7 @@ impl Context {
         let event = match super::event::map_nonuser_event(event) {
             Ok(event) => event,
             Err(function) => {
-                (function)(&mut ContextHandle::new(self, event_loop));
-                return;
+                panic!("idk bro");
             }
         };
 
@@ -441,15 +341,10 @@ impl Context {
         }
 
         // Run window event handlers.
-        let run_context_handlers = match &mut event {
-            Event::WindowEvent(event) => self.run_window_event_handlers(event, event_loop),
-            _ => true,
-        };
-
-        // Run context event handlers.
-        if run_context_handlers {
-            self.run_event_handlers(&mut event, event_loop);
-        }
+        // let run_context_handlers = match &mut event {
+        //     Event::WindowEvent(event) => self.run_window_event_handlers(event, event_loop),
+        //     _ => true,
+        // };
 
         // Perform default actions for events.
         match event {
@@ -479,43 +374,12 @@ impl Context {
         }
     }
 
-    /// Run global event handlers.
-    pub fn run_event_handlers(&mut self, event: &mut Event, event_loop: &EventLoopWindowTarget) {
-        use super::util::RetainMut;
-
-        // Event handlers could potentially modify the list of event handlers.
-        // Also, even if they couldn't we'd still need borrow self mutably multiple times to run the event handlers.
-        // That's not allowed, of course, so temporarily swap the event handlers with a new vector.
-        // When we've run all handlers, we add the new handlers to the original vector and place it back.
-        // https://newfastuff.com/wp-content/uploads/2019/05/dVIkgAf.png
-        let mut event_handlers = std::mem::take(&mut self.event_handlers);
-
-        let mut stop_propagation = false;
-        RetainMut::retain_mut(&mut event_handlers, |handler| {
-            if stop_propagation {
-                true
-            } else {
-                let mut context_handle = ContextHandle::new(self, event_loop);
-                let mut control = EventHandlerControlFlow::default();
-                (handler)(&mut context_handle, event, &mut control);
-                stop_propagation = control.stop_propagation;
-                !control.remove_handler
-            }
-        });
-
-        let new_event_handlers = std::mem::take(&mut self.event_handlers);
-        event_handlers.extend(new_event_handlers);
-        self.event_handlers = event_handlers;
-    }
-
     /// Run window-specific event handlers.
     fn run_window_event_handlers(
         &mut self,
         event: &mut WindowEvent,
-        event_loop: &EventLoopWindowTarget,
+        event_loop: &EventLoop<()>,
     ) -> bool {
-        use super::util::RetainMut;
-
         let window_index = match self
             .windows
             .iter()
@@ -525,29 +389,8 @@ impl Context {
             None => return true,
         };
 
-        let mut event_handlers = std::mem::take(&mut self.windows[window_index].event_handlers);
-
         let mut stop_propagation = false;
         let mut window_destroyed = false;
-        RetainMut::retain_mut(&mut event_handlers, |handler| {
-            if window_destroyed || stop_propagation {
-                true
-            } else {
-                let context_handle = ContextHandle::new(self, event_loop);
-                let window_handle =
-                    WindowHandle::new(context_handle, window_index, Some(&mut window_destroyed));
-                let mut control = EventHandlerControlFlow::default();
-                (handler)(window_handle, event, &mut control);
-                stop_propagation = control.stop_propagation;
-                !control.remove_handler
-            }
-        });
-
-        if !window_destroyed {
-            let new_event_handlers = std::mem::take(&mut self.windows[window_index].event_handlers);
-            event_handlers.extend(new_event_handlers);
-            self.windows[window_index].event_handlers = event_handlers;
-        }
 
         !stop_propagation && !window_destroyed
     }
