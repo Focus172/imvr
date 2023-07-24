@@ -9,4 +9,4 @@ glam            = "0.24"
 image-out       = { package = "image", version = "0.24.1"}
 indexmap        = "2.0"
 wgpu            = { version = "0.16", features = ["spirv"] }
-winit           = "0.28"
+winit           = "0.28.6"
