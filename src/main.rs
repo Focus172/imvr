@@ -1,36 +1,47 @@
 #![feature(exitcode_exit_method)]
 
-mod backend;
 mod background_thread;
+mod buffers;
 mod color;
-mod image;
+mod context;
+mod gpu;
 mod image_info;
+// mod mouse;
 mod request;
+mod window;
 
 use std::path::PathBuf;
 
 use crate::{
-    backend::{context::Context, window::WindowOptions},
-    image_info::ImageInfo,
+    context::Context,
+    image_info::{ImageInfo, ImageView},
+    request::Request,
+    window::WindowOptions,
 };
-use image::ImageView;
 
 const IMG_DIR: &str = "/Users/evan/Pictures/anime";
 
 fn main() {
     env_logger::init();
 
-    let (mut context, event_loop) = Context::new(wgpu::TextureFormat::Bgra8Unorm).unwrap();
+    let (mut context, event_loop) = Context::new().unwrap();
 
     let mut files: Vec<PathBuf> = std::fs::read_dir(IMG_DIR)
         .unwrap()
         .map(|f| f.unwrap().path())
         .collect();
 
-    let mut raw_img = image_out::open(files.pop().unwrap()).unwrap();
+    let mut raw_img = image::open(files.pop().unwrap()).unwrap();
     let mut image_set = false;
 
     let mut current_win_id: Option<usize> = None;
+
+    // TODO: Parse args to create an some initial requests
+
+    context.request_queue.push_back(Request::OpenWindow);
+    context
+        .request_queue
+        .push_back(Request::ShowImage(files.pop().unwrap()));
 
     event_loop.run(move |event, event_loop, control_flow| {
         *control_flow = winit::event_loop::ControlFlow::Wait;
@@ -44,15 +55,20 @@ fn main() {
         }
 
         context.handle_event(event, event_loop);
+        // background_thread.cli.dump_reqests(&mut context.request_queue)
+        // background_thread.socket.dump_reqests(&mut context.request_queue)
 
-        while let Some(req) = context.request_queue.pop() {
+        // context.run_requests(event_loop, control_flow);
+
+        while let Some(req) = context.request_queue.pop_front() {
             match req {
                 request::Request::NextImage => {
                     log::warn!("imvr: moving to next image");
-                    raw_img = image_out::open(files.pop().unwrap()).unwrap();
+                    raw_img = image::open(files.pop().unwrap()).unwrap();
                     image_set = false;
                 }
                 request::Request::Exit => context.exit(0.into()),
+                _ => {}
             }
         }
 
@@ -64,7 +80,9 @@ fn main() {
             let buf: Vec<u8> = raw_img.to_rgb8().pixels().flat_map(|p| p.0).collect();
             let image = ImageView::new(ImageInfo::rgb8(w, h), &buf);
 
+            log::info!("Read image to vec");
             let im = context.make_gpu_image("image-001", &image);
+            log::info!("Created gpu image");
 
             let window = &mut context.windows[current_win_id.unwrap()];
 

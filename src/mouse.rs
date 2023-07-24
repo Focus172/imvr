@@ -1,5 +1,6 @@
 use crate::backend::mouse::MouseButtonState;
 use std::collections::BTreeMap;
+use winit::event::MouseButton;
 use winit::{
     event::{DeviceEvent, DeviceId, ElementState, Event, WindowEvent},
     window::WindowId,
@@ -98,6 +99,29 @@ impl MouseCache {
             .collect();
         for key in &keys {
             self.mouse_prev_position.remove(key);
+        }
+    }
+}
+
+/// The state of all mouse buttons.
+#[derive(Debug, Clone, Default)]
+pub struct MouseButtonState {
+    /// The set of pressed buttons.
+    buttons: std::collections::HashSet<MouseButton>,
+}
+
+impl MouseButtonState {
+    /// Check if a button is pressed.
+    pub fn is_pressed(&self, button: MouseButton) -> bool {
+        self.buttons.get(&button).is_some()
+    }
+
+    /// Mark a button as pressed or unpressed.
+    pub fn set_pressed(&mut self, button: MouseButton, pressed: bool) {
+        if pressed {
+            self.buttons.insert(button);
+        } else {
+            self.buttons.remove(&button);
         }
     }
 }

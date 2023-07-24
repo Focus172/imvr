@@ -1,6 +1,6 @@
-use crate::backend::util::GpuImage;
-use crate::backend::util::UniformsBuffer;
+use crate::buffers::UniformsBuffer;
 use crate::color::Color;
+use crate::gpu::GpuImage;
 use glam::Vec3;
 use glam::{Affine2, Vec2};
 use winit::window::WindowId;
@@ -33,85 +33,6 @@ pub struct Window {
     // pub event_handlers: Vec<Box<DynWindowEventHandler>>,
 }
 
-/// An overlay added to a window.
-pub struct Overlay {
-    /// The image to show.
-    pub image: GpuImage,
-
-    /// If true, show the overlay, otherwise do not.
-    pub visible: bool,
-}
-
-/// Options for creating a new window.
-#[derive(Debug, Clone)]
-pub struct WindowOptions {
-    /// Preserve the aspect ratio of the image when scaling.
-    pub preserve_aspect_ratio: bool,
-
-    /// The background color for the window.
-    ///
-    /// This is used to color areas without image data if `preserve_aspect_ratio` is true.
-    pub background_color: Color,
-
-    /// Create the window hidden.
-    ///
-    /// The window can manually be made visible at a later time.
-    pub start_hidden: bool,
-
-    /// The initial size of the window in pixel.
-    ///
-    /// This may be ignored by some window managers.
-    pub size: Option<[u32; 2]>,
-
-    /// If true allow the window to be resized.
-    ///
-    /// This may be ignored by some window managers.
-    pub resizable: bool,
-
-    /// Make the window borderless.
-    ///
-    /// This may be ignored by some window managers.
-    pub borderless: bool,
-
-    /// Make the window fullscreen.
-    ///
-    /// This may be ignored by some window managers.
-    pub fullscreen: bool,
-
-    /// If true, draw overlays on the image.
-    ///
-    /// Defaults to true.
-    pub overlays_visible: bool,
-
-    /// If true, enable default mouse based controls for panning and zooming the image.
-    ///
-    /// Defaults to true.
-    pub default_controls: bool,
-}
-
-impl Default for WindowOptions {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl WindowOptions {
-    /// Create new window options with default values.
-    pub fn new() -> Self {
-        Self {
-            preserve_aspect_ratio: true,
-            background_color: Color::black(),
-            start_hidden: false,
-            size: None,
-            resizable: true,
-            borderless: false,
-            fullscreen: false,
-            overlays_visible: true,
-            default_controls: true,
-        }
-    }
-}
-
 impl Window {
     /// Get the window ID.
     pub fn id(&self) -> WindowId {
@@ -138,6 +59,56 @@ impl Window {
                 transform: self.user_transform,
                 image_size: Vec2::new(0.0, 0.0),
             }
+        }
+    }
+}
+
+/// Options for creating a new window.
+#[derive(Debug, Clone)]
+pub struct WindowOptions {
+    /// Preserve the aspect ratio of the image when scaling.
+    pub preserve_aspect_ratio: bool,
+
+    /// The background color for the window.
+    ///
+    /// This is used to color areas without image data if `preserve_aspect_ratio` is true.
+    pub background_color: Color,
+
+    /// Create the window hidden.
+    ///
+    /// The window can manually be made visible at a later time.
+    pub start_hidden: bool,
+
+    /// The initial size of the window in pixel.
+    pub size: Option<[u32; 2]>,
+
+    /// If true allow the window to be resized.
+    pub resizable: bool,
+
+    /// Make the window borderless.
+    pub borderless: bool,
+
+    /// Make the window fullscreen.
+    pub fullscreen: bool,
+}
+
+impl Default for WindowOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl WindowOptions {
+    /// Create new window options with default values.
+    pub fn new() -> Self {
+        Self {
+            preserve_aspect_ratio: true,
+            background_color: Color::black(),
+            start_hidden: false,
+            size: None,
+            resizable: true,
+            borderless: false,
+            fullscreen: false,
         }
     }
 }
@@ -272,7 +243,7 @@ pub struct WindowUniformsStd140 {
     transform: Mat3x3,
 }
 
-unsafe impl crate::backend::util::ToStd140 for WindowUniforms {
+unsafe impl crate::buffers::ToStd140 for WindowUniforms {
     type Output = WindowUniformsStd140;
 
     fn to_std140(&self) -> Self::Output {

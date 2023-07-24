@@ -1,15 +1,15 @@
-use crate::backend::{
-    gpu::GpuContext,
-    util::{GpuImage, UniformsBuffer},
-    window::{Window, WindowUniforms},
-};
 use crate::background_thread::BackgroundThread;
 use crate::request::Request;
 use crate::ImageView;
 use crate::WindowOptions;
+use crate::{
+    buffers::UniformsBuffer,
+    gpu::{GpuContext, GpuImage},
+    window::{Window, WindowUniforms},
+};
 use anyhow::anyhow;
 use glam::Affine2;
-use std::{collections::HashMap, process::ExitCode};
+use std::{collections::VecDeque, process::ExitCode};
 use winit::{
     event::{ElementState, Event, KeyEvent, WindowEvent},
     event_loop::{EventLoop, EventLoopWindowTarget},
@@ -19,9 +19,6 @@ use winit::{
 
 /// The global context managing all windows and the main event loop.
 pub struct Context {
-    /// Marker to make context !Send.
-    pub unsend: std::marker::PhantomData<*const ()>,
-
     /// The wgpu instance to create surfaces with.
     pub instance: wgpu::Instance,
 
@@ -34,26 +31,20 @@ pub struct Context {
     /// The windows.
     pub windows: Vec<Window>,
 
-    /// Cache for mouse state.
-    pub mouse_cache: super::mouse_cache::MouseCache,
-
-    /// If true, exit the program when the last window closes.
-    pub exit_with_last_window: bool,
-
+    // Cache for mouse state.
+    // pub mouse_cache: crate::backend::mouse_cache::MouseCache,
     /// Background tasks, like saving images.
     pub background_tasks: Vec<BackgroundThread<()>>,
 
-    /// Current Key Modifiers
-    pub key_mods: HashMap<KeyCode, bool>,
-
     /// Current Requests to for actions
-    pub request_queue: Vec<Request>,
+    pub request_queue: VecDeque<Request>,
 }
 
 impl Context {
-    pub fn new(swap_chain_format: wgpu::TextureFormat) -> anyhow::Result<(Self, EventLoop<()>)> {
+    /// Creates a new global context returning the event loop for it
+    pub fn new() -> anyhow::Result<(Self, EventLoop<()>)> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: select_backend(),
+            backends: wgpu::Backends::PRIMARY,
             dx12_shader_compiler: Default::default(),
         });
 
@@ -62,16 +53,14 @@ impl Context {
 
         Ok((
             Self {
-                unsend: Default::default(),
                 instance,
                 gpu: None,
-                swap_chain_format,
+                swap_chain_format: wgpu::TextureFormat::Bgra8Unorm,
                 windows: Vec::new(),
-                mouse_cache: Default::default(),
-                exit_with_last_window: false,
+                // mouse_cache: Default::default(),
                 background_tasks: Vec::new(),
-                key_mods: HashMap::new(),
-                request_queue: Vec::new(),
+                // key_mods: HashMap::new(),
+                request_queue: VecDeque::new(),
             },
             event_loop,
         ))
@@ -239,12 +228,7 @@ impl Context {
         event: winit::event::Event<()>,
         _event_loop: &EventLoopWindowTarget<()>,
     ) {
-        self.mouse_cache.handle_event(&event);
-
-        // If we have nothing more to do, clean the background tasks.
-        if let winit::event::Event::MainEventsCleared = &event {
-            self.clean_background_tasks();
-        }
+        // self.mouse_cache.handle_event(&event);
 
         // Run window event handlers.
         // let run_context_handlers = match &mut event {
@@ -261,21 +245,13 @@ impl Context {
                         let _ = self.resize_window(window_id, size);
                     }
                 }
-                WindowEvent::KeyboardInput { event, .. } => {
-                    self.handle_keypress(event)
-                    // match (event.physical_key, event.state) {
-                    //     (KeyCode::KeyQ, _) => self.exit(0.into()),
-                    //     (KeyCode::ShiftLeft, ElementState::Pressed) => {
-                    //         self.key_mods.insert(KeyCode::ShiftLeft, true)
-                    //     }
-                    // }
-                }
-                WindowEvent::CloseRequested => {
-                    let _ = self.destroy_window(window_id);
-                }
+                WindowEvent::KeyboardInput { event, .. } => self.handle_keypress(event),
+                WindowEvent::CloseRequested => self.destroy_window(window_id).unwrap(),
                 _ => {}
             },
             Event::RedrawRequested(window_id) => self.render_window(window_id).unwrap(),
+            // If we have nothing more to do, clean the background tasks.
+            Event::MainEventsCleared => self.background_tasks.retain(|task| !task.is_done()),
             _ => {}
         }
     }
@@ -284,15 +260,10 @@ impl Context {
         match (key.physical_key, key.state, key.repeat) {
             (KeyCode::KeyQ, ElementState::Pressed, _) => self.exit(0.into()),
             (KeyCode::KeyL, ElementState::Pressed, _) => {
-                self.request_queue.push(Request::NextImage)
+                self.request_queue.push_back(Request::NextImage)
             }
             (_, _, _) => {}
         }
-    }
-
-    /// Clean-up finished background tasks.
-    fn clean_background_tasks(&mut self) {
-        self.background_tasks.retain(|task| !task.is_done());
     }
 
     /// Join all background tasks and then exit the process.
@@ -302,10 +273,6 @@ impl Context {
         }
         code.exit_process()
     }
-}
-
-fn select_backend() -> wgpu::Backends {
-    wgpu::Backends::PRIMARY
 }
 
 /// Create a swap chain for a surface.
