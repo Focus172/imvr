@@ -1,10 +1,9 @@
 use crate::backend::util::GpuImage;
 use crate::backend::util::UniformsBuffer;
-use crate::Color;
-use crate::WindowId;
+use crate::color::Color;
 use glam::Vec3;
 use glam::{Affine2, Vec2};
-use indexmap::IndexMap;
+use winit::window::WindowId;
 
 /// Window capable of displaying images using wgpu.
 pub struct Window {
@@ -25,9 +24,6 @@ pub struct Window {
 
     /// The image to display (if any).
     pub image: Option<GpuImage>,
-
-    /// Overlays for the window.
-    pub overlays: IndexMap<String, Overlay>,
 
     /// Transformation to apply to the image, in virtual window space.
     ///

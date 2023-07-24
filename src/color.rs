@@ -22,7 +22,12 @@ impl Color {
 
     /// Create a new color from the RGBA components.
     pub const fn rgba(red: f64, green: f64, blue: f64, alpha: f64) -> Self {
-        Self { red, green, blue, alpha }
+        Self {
+            red,
+            green,
+            blue,
+            alpha,
+        }
     }
 
     /// Get a color representing fully opaque black.
@@ -36,3 +41,13 @@ impl Color {
     }
 }
 
+impl From<Color> for wgpu::Color {
+    fn from(other: Color) -> Self {
+        Self {
+            r: other.red,
+            g: other.green,
+            b: other.blue,
+            a: other.alpha,
+        }
+    }
+}

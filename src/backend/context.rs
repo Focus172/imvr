@@ -1,29 +1,21 @@
-use crate::backend::util::GpuImage;
-use crate::backend::util::UniformsBuffer;
-use crate::backend::window::Window;
-use crate::backend::window::WindowUniforms;
+use crate::backend::{
+    gpu::GpuContext,
+    util::{GpuImage, UniformsBuffer},
+    window::{Window, WindowUniforms},
+};
 use crate::background_thread::BackgroundThread;
+use crate::request::Request;
 use crate::ImageView;
-use crate::WindowId;
 use crate::WindowOptions;
 use anyhow::anyhow;
 use glam::Affine2;
-use std::process::ExitCode;
-use winit::event::{Event, WindowEvent};
-use winit::event_loop::{EventLoop, EventLoopWindowTarget};
-
-use super::gpu::GpuContext;
-
-impl From<crate::Color> for wgpu::Color {
-    fn from(other: crate::Color) -> Self {
-        Self {
-            r: other.red,
-            g: other.green,
-            b: other.blue,
-            a: other.alpha,
-        }
-    }
-}
+use std::{collections::HashMap, process::ExitCode};
+use winit::{
+    event::{ElementState, Event, KeyEvent, WindowEvent},
+    event_loop::{EventLoop, EventLoopWindowTarget},
+    keyboard::KeyCode,
+    window::WindowId,
+};
 
 /// The global context managing all windows and the main event loop.
 pub struct Context {
@@ -50,6 +42,12 @@ pub struct Context {
 
     /// Background tasks, like saving images.
     pub background_tasks: Vec<BackgroundThread<()>>,
+
+    /// Current Key Modifiers
+    pub key_mods: HashMap<KeyCode, bool>,
+
+    /// Current Requests to for actions
+    pub request_queue: Vec<Request>,
 }
 
 impl Context {
@@ -72,6 +70,8 @@ impl Context {
                 mouse_cache: Default::default(),
                 exit_with_last_window: false,
                 background_tasks: Vec::new(),
+                key_mods: HashMap::new(),
+                request_queue: Vec::new(),
             },
             event_loop,
         ))
@@ -127,8 +127,6 @@ impl Context {
             uniforms,
             image: None,
             user_transform: Affine2::IDENTITY,
-            overlays: Default::default(),
-            // event_handlers: Vec::new(),
         };
 
         self.windows.push(window);
@@ -206,30 +204,30 @@ impl Context {
                 .update_from(&gpu.device, &mut encoder, &window.calculate_uniforms());
         }
 
-        render_pass(
-            &mut encoder,
-            &gpu.window_pipeline,
-            &window.uniforms,
-            image,
-            Some(window.background_color),
-            &frame
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default()),
-        );
-        for (_name, overlay) in &window.overlays {
-            if overlay.visible {
-                render_pass(
-                    &mut encoder,
-                    &gpu.window_pipeline,
-                    &window.uniforms,
-                    &overlay.image,
-                    None,
-                    &frame
-                        .texture
-                        .create_view(&wgpu::TextureViewDescriptor::default()),
-                );
-            }
-        }
+        // --------------- RENDER PASS BEGIN ------------------- //
+        let load = wgpu::LoadOp::Clear(window.background_color.into());
+
+        let surface = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("render-image"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &surface,
+                resolve_target: None,
+                ops: wgpu::Operations { load, store: true },
+            })],
+            depth_stencil_attachment: None,
+        });
+
+        render_pass.set_pipeline(&gpu.window_pipeline);
+        render_pass.set_bind_group(0, window.uniforms.bind_group(), &[]);
+        render_pass.set_bind_group(1, image.bind_group(), &[]);
+        render_pass.draw(0..6, 0..1);
+        drop(render_pass);
+        // --------------- RENDER PASS END ------------------- //
+
         gpu.queue.submit(std::iter::once(encoder.finish()));
         frame.present();
         Ok(())
@@ -263,15 +261,14 @@ impl Context {
                         let _ = self.resize_window(window_id, size);
                     }
                 }
-                WindowEvent::KeyboardInput { input, .. } => {
-                    // if event.input.state.is_pressed() && event.input.key_code == Some(event::VirtualKeyCode::S) {
-                    // 	let overlays = event.input.modifiers.alt();
-                    // 	let modifiers = event.input.modifiers & !event::ModifiersState::ALT;
-                    // 	if modifiers == event::ModifiersState::CTRL {
-                    // 		self.save_image_prompt(event.window_id, overlays);
-                    // 	} else if modifiers == event::ModifiersState::CTRL | event::ModifiersState::SHIFT {
-                    // 		self.save_image(event.window_id, overlays);
-                    // 	}
+                WindowEvent::KeyboardInput { event, .. } => {
+                    self.handle_keypress(event)
+                    // match (event.physical_key, event.state) {
+                    //     (KeyCode::KeyQ, _) => self.exit(0.into()),
+                    //     (KeyCode::ShiftLeft, ElementState::Pressed) => {
+                    //         self.key_mods.insert(KeyCode::ShiftLeft, true)
+                    //     }
+                    // }
                 }
                 WindowEvent::CloseRequested => {
                     let _ = self.destroy_window(window_id);
@@ -283,21 +280,26 @@ impl Context {
         }
     }
 
+    fn handle_keypress(&mut self, key: KeyEvent) {
+        match (key.physical_key, key.state, key.repeat) {
+            (KeyCode::KeyQ, ElementState::Pressed, _) => self.exit(0.into()),
+            (KeyCode::KeyL, ElementState::Pressed, _) => {
+                self.request_queue.push(Request::NextImage)
+            }
+            (_, _, _) => {}
+        }
+    }
+
     /// Clean-up finished background tasks.
     fn clean_background_tasks(&mut self) {
         self.background_tasks.retain(|task| !task.is_done());
     }
 
-    /// Join all background tasks.
-    fn join_background_tasks(&mut self) {
+    /// Join all background tasks and then exit the process.
+    pub fn exit(&mut self, code: ExitCode) -> ! {
         for task in std::mem::take(&mut self.background_tasks) {
             task.join().unwrap();
         }
-    }
-
-    /// Join all background tasks and then exit the process.
-    pub fn exit(&mut self, code: ExitCode) -> ! {
-        self.join_background_tasks();
         code.exit_process()
     }
 }
@@ -323,35 +325,4 @@ fn configure_surface(
         view_formats: Default::default(),
     };
     surface.configure(device, &config);
-}
-
-/// Perform a render pass of an image.
-fn render_pass(
-    encoder: &mut wgpu::CommandEncoder,
-    render_pipeline: &wgpu::RenderPipeline,
-    window_uniforms: &UniformsBuffer<WindowUniforms>,
-    image: &GpuImage,
-    clear: Option<crate::Color>,
-    target: &wgpu::TextureView,
-) {
-    let load = match clear {
-        Some(color) => wgpu::LoadOp::Clear(color.into()),
-        None => wgpu::LoadOp::Load,
-    };
-
-    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("render-image"),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view: target,
-            resolve_target: None,
-            ops: wgpu::Operations { load, store: true },
-        })],
-        depth_stencil_attachment: None,
-    });
-
-    render_pass.set_pipeline(render_pipeline);
-    render_pass.set_bind_group(0, window_uniforms.bind_group(), &[]);
-    render_pass.set_bind_group(1, image.bind_group(), &[]);
-    render_pass.draw(0..6, 0..1);
-    drop(render_pass);
 }

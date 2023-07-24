@@ -1,7 +1,9 @@
 use crate::backend::mouse::MouseButtonState;
-use crate::WindowId;
 use std::collections::BTreeMap;
-use winit::event::{DeviceEvent, DeviceId, ElementState, Event, WindowEvent};
+use winit::{
+    event::{DeviceEvent, DeviceId, ElementState, Event, WindowEvent},
+    window::WindowId,
+};
 
 #[derive(Default)]
 pub struct MouseCache {
