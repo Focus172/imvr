@@ -1,20 +1,18 @@
 use crate::backend::util::GpuImage;
-use crate::backend::util::{ToStd140, UniformsBuffer};
+use crate::backend::util::UniformsBuffer;
 use crate::backend::window::Window;
 use crate::backend::window::WindowUniforms;
 use crate::background_thread::BackgroundThread;
-use crate::error::CreateWindowError;
-use crate::error::GetDeviceError;
-use crate::error::InvalidWindowId;
-use crate::error::NoSuitableAdapterFound;
-use crate::event::{Event, WindowEvent};
 use crate::ImageView;
 use crate::WindowId;
 use crate::WindowOptions;
-use core::num::NonZeroU64;
+use anyhow::anyhow;
 use glam::Affine2;
 use std::process::ExitCode;
+use winit::event::{Event, WindowEvent};
 use winit::event_loop::{EventLoop, EventLoopWindowTarget};
+
+use super::gpu::GpuContext;
 
 impl From<crate::Color> for wgpu::Color {
     fn from(other: crate::Color) -> Self {
@@ -27,23 +25,6 @@ impl From<crate::Color> for wgpu::Color {
     }
 }
 
-pub struct GpuContext {
-    /// The wgpu device to use.
-    pub device: wgpu::Device,
-
-    /// The wgpu command queue to use.
-    pub queue: wgpu::Queue,
-
-    /// The bind group layout for the window specific bindings.
-    pub window_bind_group_layout: wgpu::BindGroupLayout,
-
-    /// The bind group layout for the image specific bindings.
-    pub image_bind_group_layout: wgpu::BindGroupLayout,
-
-    /// The render pipeline to use for windows.
-    pub window_pipeline: wgpu::RenderPipeline,
-}
-
 /// The global context managing all windows and the main event loop.
 pub struct Context {
     /// Marker to make context !Send.
@@ -54,12 +35,6 @@ pub struct Context {
 
     /// GPU related context that can not be initialized until we have a valid surface.
     pub gpu: Option<GpuContext>,
-
-    /// The event loop to use.
-    ///
-    /// Running the event loop consumes it,
-    /// so from that point on this field is `None`.
-    pub event_loop: Option<EventLoop<()>>,
 
     /// The swap chain format to use.
     pub swap_chain_format: wgpu::TextureFormat,
@@ -77,86 +52,38 @@ pub struct Context {
     pub background_tasks: Vec<BackgroundThread<()>>,
 }
 
-impl GpuContext {
-    pub fn new(
-        instance: &wgpu::Instance,
-        swap_chain_format: wgpu::TextureFormat,
-        surface: &wgpu::Surface,
-    ) -> Result<Self, GetDeviceError> {
-        let (device, queue) = futures::executor::block_on(get_device(instance, surface))?;
-        device.on_uncaptured_error(Box::new(|error| {
-            panic!("Unhandled WGPU error: {}", error);
-        }));
-
-        let window_bind_group_layout = create_window_bind_group_layout(&device);
-        let image_bind_group_layout = create_image_bind_group_layout(&device);
-
-        let vertex_shader =
-            device.create_shader_module(wgpu::include_spirv!("../../shaders/shader.vert.spv"));
-        let fragment_shader_unorm8 =
-            device.create_shader_module(wgpu::include_spirv!("../../shaders/unorm8.frag.spv"));
-
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("show-image-pipeline-layout"),
-            bind_group_layouts: &[&window_bind_group_layout, &image_bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
-        let window_pipeline = create_render_pipeline(
-            &device,
-            &pipeline_layout,
-            &vertex_shader,
-            &fragment_shader_unorm8,
-            swap_chain_format,
-        );
-
-        Ok(Self {
-            device,
-            queue,
-            window_bind_group_layout,
-            image_bind_group_layout,
-            window_pipeline,
-        })
-    }
-}
-
 impl Context {
-    /// Create a new global context.
-    ///
-    /// You can theoreticlly create as many contexts as you want,
-    /// but they must be run from the main thread and the [`run`](Self::run) function never returns.
-    /// So it is not possible to *run* more than one context.
-    pub fn new(swap_chain_format: wgpu::TextureFormat) -> Result<Self, GetDeviceError> {
+    pub fn new(swap_chain_format: wgpu::TextureFormat) -> anyhow::Result<(Self, EventLoop<()>)> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: select_backend(),
             dx12_shader_compiler: Default::default(),
         });
 
-        //let event_loop = winit::event_loop::EventLoopBuilder::with_user_event().build();
+        // Consider adding user events
         let event_loop = winit::event_loop::EventLoop::new();
 
-        Ok(Self {
-            unsend: Default::default(),
-            instance,
-            gpu: None,
-            event_loop: Some(event_loop),
-            swap_chain_format,
-            windows: Vec::new(),
-            mouse_cache: Default::default(),
-            exit_with_last_window: false,
-            background_tasks: Vec::new(),
-        })
+        Ok((
+            Self {
+                unsend: Default::default(),
+                instance,
+                gpu: None,
+                swap_chain_format,
+                windows: Vec::new(),
+                mouse_cache: Default::default(),
+                exit_with_last_window: false,
+                background_tasks: Vec::new(),
+            },
+            event_loop,
+        ))
     }
-}
 
-impl Context {
     /// Create a window.
     pub fn create_window(
         &mut self,
         event_loop: &EventLoopWindowTarget<()>,
         title: impl Into<String>,
         options: WindowOptions,
-    ) -> Result<usize, CreateWindowError> {
+    ) -> anyhow::Result<usize> {
         let fullscreen = if options.fullscreen {
             Some(winit::window::Fullscreen::Borderless(None))
         } else {
@@ -210,12 +137,13 @@ impl Context {
     }
 
     /// Destroy a window.
-    fn destroy_window(&mut self, window_id: WindowId) -> Result<(), InvalidWindowId> {
+    #[allow(unused)]
+    fn destroy_window(&mut self, window_id: WindowId) -> anyhow::Result<()> {
         let index = self
             .windows
             .iter()
             .position(|w| w.id() == window_id)
-            .ok_or(InvalidWindowId { window_id })?;
+            .ok_or(anyhow!("Invalid window id: {:?}", window_id))?;
         self.windows.remove(index);
         Ok(())
     }
@@ -232,16 +160,13 @@ impl Context {
     }
 
     /// Resize a window.
-    fn resize_window(
-        &mut self,
-        window_id: WindowId,
-        new_size: glam::UVec2,
-    ) -> Result<(), InvalidWindowId> {
+    #[allow(unused)]
+    fn resize_window(&mut self, window_id: WindowId, new_size: glam::UVec2) -> anyhow::Result<()> {
         let window = self
             .windows
             .iter_mut()
             .find(|w| w.id() == window_id)
-            .ok_or(InvalidWindowId { window_id })?;
+            .ok_or(anyhow!("Invalid window id: {:?}", window_id))?;
 
         let gpu = self.gpu.as_ref().unwrap();
         configure_surface(
@@ -255,12 +180,12 @@ impl Context {
     }
 
     /// Render the contents of a window.
-    fn render_window(&mut self, window_id: WindowId) -> Result<(), InvalidWindowId> {
+    fn render_window(&mut self, window_id: WindowId) -> anyhow::Result<()> {
         let window = self
             .windows
             .iter_mut()
             .find(|w| w.id() == window_id)
-            .ok_or(InvalidWindowId { window_id })?;
+            .ok_or(anyhow!("Invalid window id: {:?}", window_id))?;
 
         let image = match &window.image {
             Some(x) => x,
@@ -314,29 +239,12 @@ impl Context {
     pub fn handle_event(
         &mut self,
         event: winit::event::Event<()>,
-        event_loop: &EventLoopWindowTarget<()>,
-        control_flow: &mut winit::event_loop::ControlFlow,
+        _event_loop: &EventLoopWindowTarget<()>,
     ) {
-        *control_flow = winit::event_loop::ControlFlow::Wait;
-
-        // Split between Event<ContextFunction> and ContextFunction commands.
-        let event = match super::event::map_nonuser_event(event) {
-            Ok(event) => event,
-            Err(function) => {
-                panic!("idk bro");
-            }
-        };
-
         self.mouse_cache.handle_event(&event);
 
-        // Convert to own event type.
-        let mut event = match super::event::convert_winit_event(event, &self.mouse_cache) {
-            Some(x) => x,
-            None => return,
-        };
-
         // If we have nothing more to do, clean the background tasks.
-        if let Event::MainEventsCleared = &event {
+        if let winit::event::Event::MainEventsCleared = &event {
             self.clean_background_tasks();
         }
 
@@ -348,51 +256,31 @@ impl Context {
 
         // Perform default actions for events.
         match event {
-            Event::WindowEvent(WindowEvent::KeyboardInput(event)) => {
-                // if event.input.state.is_pressed() && event.input.key_code == Some(event::VirtualKeyCode::S) {
-                // 	let overlays = event.input.modifiers.alt();
-                // 	let modifiers = event.input.modifiers & !event::ModifiersState::ALT;
-                // 	if modifiers == event::ModifiersState::CTRL {
-                // 		self.save_image_prompt(event.window_id, overlays);
-                // 	} else if modifiers == event::ModifiersState::CTRL | event::ModifiersState::SHIFT {
-                // 		self.save_image(event.window_id, overlays);
-                // 	}
-                // }
-            }
-            Event::WindowEvent(WindowEvent::Resized(event)) => {
-                if event.size.x > 0 && event.size.y > 0 {
-                    let _ = self.resize_window(event.window_id, event.size);
+            Event::WindowEvent { window_id, event } => match event {
+                WindowEvent::Resized(new_size) => {
+                    if new_size.width > 0 && new_size.height > 0 {
+                        let size = glam::UVec2::from_array([new_size.width, new_size.height]);
+                        let _ = self.resize_window(window_id, size);
+                    }
                 }
-            }
-            Event::WindowEvent(WindowEvent::RedrawRequested(event)) => {
-                let _ = self.render_window(event.window_id);
-            }
-            Event::WindowEvent(WindowEvent::CloseRequested(event)) => {
-                let _ = self.destroy_window(event.window_id);
-            }
+                WindowEvent::KeyboardInput { input, .. } => {
+                    // if event.input.state.is_pressed() && event.input.key_code == Some(event::VirtualKeyCode::S) {
+                    // 	let overlays = event.input.modifiers.alt();
+                    // 	let modifiers = event.input.modifiers & !event::ModifiersState::ALT;
+                    // 	if modifiers == event::ModifiersState::CTRL {
+                    // 		self.save_image_prompt(event.window_id, overlays);
+                    // 	} else if modifiers == event::ModifiersState::CTRL | event::ModifiersState::SHIFT {
+                    // 		self.save_image(event.window_id, overlays);
+                    // 	}
+                }
+                WindowEvent::CloseRequested => {
+                    let _ = self.destroy_window(window_id);
+                }
+                _ => {}
+            },
+            Event::RedrawRequested(window_id) => self.render_window(window_id).unwrap(),
             _ => {}
         }
-    }
-
-    /// Run window-specific event handlers.
-    fn run_window_event_handlers(
-        &mut self,
-        event: &mut WindowEvent,
-        event_loop: &EventLoop<()>,
-    ) -> bool {
-        let window_index = match self
-            .windows
-            .iter()
-            .position(|x| x.id() == event.window_id())
-        {
-            Some(x) => x,
-            None => return true,
-        };
-
-        let mut stop_propagation = false;
-        let mut window_destroyed = false;
-
-        !stop_propagation && !window_destroyed
     }
 
     /// Clean-up finished background tasks.
@@ -416,146 +304,6 @@ impl Context {
 
 fn select_backend() -> wgpu::Backends {
     wgpu::Backends::PRIMARY
-}
-
-fn select_power_preference() -> wgpu::PowerPreference {
-    wgpu::PowerPreference::LowPower
-}
-
-/// Get a wgpu device to use.
-async fn get_device(
-    instance: &wgpu::Instance,
-    surface: &wgpu::Surface,
-) -> Result<(wgpu::Device, wgpu::Queue), GetDeviceError> {
-    // Find a suitable display adapter.
-    let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: select_power_preference(),
-        compatible_surface: Some(surface),
-        force_fallback_adapter: false,
-    });
-
-    let adapter = adapter.await.ok_or(NoSuitableAdapterFound)?;
-
-    // Create the logical device and command queue
-    let device = adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            label: Some("show-image"),
-            limits: wgpu::Limits::default(),
-            features: wgpu::Features::default(),
-        },
-        None,
-    );
-
-    let (device, queue) = device.await?;
-
-    Ok((device, queue))
-}
-
-/// Create the bind group layout for the window specific bindings.
-fn create_window_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("window_bind_group_layout"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX,
-            count: None,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: Some(NonZeroU64::new(WindowUniforms::STD140_SIZE).unwrap()),
-            },
-        }],
-    })
-}
-
-/// Create the bind group layout for the image specific bindings.
-fn create_image_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("image_bind_group_layout"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                count: None,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size:
-                        Some(
-                            NonZeroU64::new(
-                                std::mem::size_of::<super::util::GpuImageUniforms>() as u64
-                            )
-                            .unwrap(),
-                        ),
-                },
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                count: None,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-            },
-        ],
-    })
-}
-
-/// Create a render pipeline with the specified device, layout, shaders and swap chain format.
-fn create_render_pipeline(
-    device: &wgpu::Device,
-    layout: &wgpu::PipelineLayout,
-    vertex_shader: &wgpu::ShaderModule,
-    fragment_shader: &wgpu::ShaderModule,
-    swap_chain_format: wgpu::TextureFormat,
-) -> wgpu::RenderPipeline {
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("show-image-pipeline"),
-        layout: Some(layout),
-        vertex: wgpu::VertexState {
-            module: vertex_shader,
-            entry_point: "main",
-            buffers: &[],
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: fragment_shader,
-            entry_point: "main",
-            targets: &[Some(wgpu::ColorTargetState {
-                format: swap_chain_format,
-                blend: Some(wgpu::BlendState {
-                    color: wgpu::BlendComponent {
-                        src_factor: wgpu::BlendFactor::SrcAlpha,
-                        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                        operation: wgpu::BlendOperation::Add,
-                    },
-                    alpha: wgpu::BlendComponent {
-                        src_factor: wgpu::BlendFactor::One,
-                        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                        operation: wgpu::BlendOperation::Add,
-                    },
-                }),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            strip_index_format: None,
-            front_face: wgpu::FrontFace::Cw,
-            cull_mode: Some(wgpu::Face::Back),
-            unclipped_depth: false,
-            polygon_mode: wgpu::PolygonMode::Fill,
-            conservative: false,
-        },
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState {
-            count: 1,
-            mask: !0,
-            alpha_to_coverage_enabled: false,
-        },
-        multiview: None,
-    })
 }
 
 /// Create a swap chain for a surface.

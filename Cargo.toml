@@ -1,12 +1,13 @@
 [package]
-name            = "imvr"
-version         = "0.1.0"
-edition         = "2021"
+name = "imvr"
+version = "0.1.0"
+edition = "2021"
 
 [dependencies]
-futures         = "0.3" 
-glam            = "0.24"
-image-out       = { package = "image", version = "0.24.1"}
-indexmap        = "2.0"
-wgpu            = { version = "0.16", features = ["spirv"] }
-winit           = "0.28.6"
+futures = "0.3"
+glam = "0.24"
+image-out = { package = "image", version = "0.24.1" }
+indexmap = "2.0"
+wgpu = { version = "0.17", features = ["spirv"] }
+winit = "0.28.6"
+anyhow = "1.0"

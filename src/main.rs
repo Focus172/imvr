@@ -3,11 +3,10 @@
 mod backend;
 mod background_thread;
 mod color;
-mod error;
-mod event;
+// mod error;
+// mod event;
 mod image;
 mod image_info;
-mod oneshot;
 
 use crate::backend::{context::Context, window::WindowOptions};
 use crate::color::Color;
@@ -16,38 +15,16 @@ use crate::image_info::ImageInfo;
 
 use winit::window::WindowId;
 
-// static mut PATH: Option<String> = None;
-
 fn main() {
-    // let args = std::env::args().collect::<Vec<String>>();
-    // match args.get(1).map(|s| s.as_str()) {
-    //     Some("command") => {
-    //
-    //     },
-    //     Some(_p) => {
-    //         unsafe { PATH = Some(_p.to_string()); }
-    //     },
-    //     None => {
-    //         eprintln!("this should fail");
-    //     },
-    // }
+    let (mut context, event_loop) = Context::new(wgpu::TextureFormat::Bgra8Unorm).unwrap();
 
-    let mut context = Context::new(wgpu::TextureFormat::Bgra8Unorm).unwrap();
-
-    let img = // unsafe { match &PATH {
-    //     Some(p) => image_out::open(p).unwrap(),
-    //     None => {
-    //         eprintln!("this should not be supported");
-            image_out::open("/Users/evan/Pictures/anime/cat.jpg").unwrap()
-    //     }
-    // }}
-    ;
-
+    let img = image_out::open("/Users/evan/Pictures/anime/cat.jpg").unwrap();
     let mut image_set = false;
 
-    let event_loop = context.event_loop.take().unwrap();
     event_loop.run(move |event, event_loop, control_flow| {
-        context.handle_event(event, event_loop, control_flow);
+        *control_flow = winit::event_loop::ControlFlow::Wait;
+
+        context.handle_event(event, event_loop);
 
         if !image_set {
             let h = img.height();
@@ -71,10 +48,7 @@ fn main() {
             image_set = true;
         }
 
-        // Check if the event handlers caused the last window(s) to close.
-        // If so, generate an AllWIndowsClosed event for the event handlers.
         if context.windows.is_empty() {
-            // context.run_event_handlers(&mut Event::AllWindowsClosed, event_loop);
             context.exit(0.into());
         }
     });
