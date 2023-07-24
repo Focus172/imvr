@@ -1,8 +1,8 @@
 use crate::buffers::UniformsBuffer;
-use crate::color::Color;
 use crate::gpu::GpuImage;
 use glam::Vec3;
 use glam::{Affine2, Vec2};
+use wgpu::Color;
 use winit::window::WindowId;
 
 /// Window capable of displaying images using wgpu.
@@ -103,7 +103,7 @@ impl WindowOptions {
     pub fn new() -> Self {
         Self {
             preserve_aspect_ratio: true,
-            background_color: Color::black(),
+            background_color: Color::BLACK,
             start_hidden: false,
             size: None,
             resizable: true,

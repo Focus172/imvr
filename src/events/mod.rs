@@ -1,3 +1,7 @@
+mod input;
+mod rpc;
+mod system;
+
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -15,4 +19,13 @@ impl<T> BackgroundThread<T> {
     pub fn join(self) -> std::thread::Result<T> {
         self.handle.join()
     }
+}
+
+use std::path::PathBuf;
+
+pub enum Request {
+    NextImage,
+    OpenWindow,
+    ShowImage(PathBuf),
+    Exit,
 }

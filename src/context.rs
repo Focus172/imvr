@@ -1,5 +1,4 @@
-use crate::background_thread::BackgroundThread;
-use crate::request::Request;
+use crate::events::Request;
 use crate::ImageView;
 use crate::WindowOptions;
 use crate::{
@@ -9,7 +8,7 @@ use crate::{
 };
 use anyhow::anyhow;
 use glam::Affine2;
-use std::{collections::VecDeque, process::ExitCode};
+use std::collections::VecDeque;
 use winit::{
     event::{ElementState, Event, KeyEvent, WindowEvent},
     event_loop::{EventLoop, EventLoopWindowTarget},
@@ -30,11 +29,6 @@ pub struct Context {
 
     /// The windows.
     pub windows: Vec<Window>,
-
-    // Cache for mouse state.
-    // pub mouse_cache: crate::backend::mouse_cache::MouseCache,
-    /// Background tasks, like saving images.
-    pub background_tasks: Vec<BackgroundThread<()>>,
 
     /// Current Requests to for actions
     pub request_queue: VecDeque<Request>,
@@ -58,7 +52,6 @@ impl Context {
                 swap_chain_format: wgpu::TextureFormat::Bgra8Unorm,
                 windows: Vec::new(),
                 // mouse_cache: Default::default(),
-                background_tasks: Vec::new(),
                 // key_mods: HashMap::new(),
                 request_queue: VecDeque::new(),
             },
@@ -194,7 +187,7 @@ impl Context {
         }
 
         // --------------- RENDER PASS BEGIN ------------------- //
-        let load = wgpu::LoadOp::Clear(window.background_color.into());
+        let load = wgpu::LoadOp::Clear(window.background_color);
 
         let surface = frame
             .texture
@@ -251,27 +244,21 @@ impl Context {
             },
             Event::RedrawRequested(window_id) => self.render_window(window_id).unwrap(),
             // If we have nothing more to do, clean the background tasks.
-            Event::MainEventsCleared => self.background_tasks.retain(|task| !task.is_done()),
+            // Event::MainEventsCleared => self.background_tasks.retain(|task| !task.is_done()),
             _ => {}
         }
     }
 
     fn handle_keypress(&mut self, key: KeyEvent) {
         match (key.physical_key, key.state, key.repeat) {
-            (KeyCode::KeyQ, ElementState::Pressed, _) => self.exit(0.into()),
+            (KeyCode::KeyQ, ElementState::Pressed, _) => {
+                self.request_queue.push_back(Request::Exit)
+            }
             (KeyCode::KeyL, ElementState::Pressed, _) => {
                 self.request_queue.push_back(Request::NextImage)
             }
             (_, _, _) => {}
         }
-    }
-
-    /// Join all background tasks and then exit the process.
-    pub fn exit(&mut self, code: ExitCode) -> ! {
-        for task in std::mem::take(&mut self.background_tasks) {
-            task.join().unwrap();
-        }
-        code.exit_process()
     }
 }
 

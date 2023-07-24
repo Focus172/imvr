@@ -1,23 +1,24 @@
 #![feature(exitcode_exit_method)]
 
-mod background_thread;
 mod buffers;
-mod color;
 mod context;
 mod gpu;
 mod image_info;
+// add this back in when needed
 // mod mouse;
-mod request;
+mod events;
 mod window;
 
-use std::path::PathBuf;
+use std::{path::PathBuf, process::ExitCode};
 
 use crate::{
     context::Context,
+    events::Request,
     image_info::{ImageInfo, ImageView},
-    request::Request,
     window::WindowOptions,
 };
+
+use image::io::Reader as ImageReader;
 
 const IMG_DIR: &str = "/Users/evan/Pictures/anime";
 
@@ -31,7 +32,11 @@ fn main() {
         .map(|f| f.unwrap().path())
         .collect();
 
-    let mut raw_img = image::open(files.pop().unwrap()).unwrap();
+    let mut raw_img = ImageReader::open(files.pop().unwrap())
+        .unwrap()
+        .decode()
+        .unwrap();
+    // image::open(files.pop().unwrap()).unwrap();
     let mut image_set = false;
 
     let mut current_win_id: Option<usize> = None;
@@ -62,12 +67,18 @@ fn main() {
 
         while let Some(req) = context.request_queue.pop_front() {
             match req {
-                request::Request::NextImage => {
+                Request::NextImage => {
                     log::warn!("imvr: moving to next image");
-                    raw_img = image::open(files.pop().unwrap()).unwrap();
+                    raw_img = ImageReader::open(files.pop().unwrap())
+                        .unwrap()
+                        .decode()
+                        .unwrap();
                     image_set = false;
                 }
-                request::Request::Exit => context.exit(0.into()),
+                Request::Exit => {
+                    // join all the processing threads
+                    ExitCode::from(0).exit_process()
+                }
                 _ => {}
             }
         }
@@ -77,8 +88,43 @@ fn main() {
             let h = raw_img.height();
             let w = raw_img.width();
             // let ctype = img.color();
-            let buf: Vec<u8> = raw_img.to_rgb8().pixels().flat_map(|p| p.0).collect();
-            let image = ImageView::new(ImageInfo::rgb8(w, h), &buf);
+            let color_type = raw_img.color();
+
+            log::info!("Color type is: {:?}", color_type);
+
+            let buf: Vec<u8> = match color_type {
+                image::ColorType::L8 => todo!(),
+                image::ColorType::La8 => todo!(),
+                image::ColorType::Rgb8 => raw_img.to_rgb8().pixels().flat_map(|p| p.0).collect(),
+                image::ColorType::Rgba8 => raw_img.to_rgba8().pixels().flat_map(|p| p.0).collect(),
+                image::ColorType::L16 => todo!(),
+                image::ColorType::La16 => todo!(),
+                image::ColorType::Rgb16 => todo!(),
+                image::ColorType::Rgba16 => todo!(),
+                image::ColorType::Rgb32F => todo!(),
+                image::ColorType::Rgba32F => todo!(),
+                _ => todo!(),
+            };
+
+            let image = match color_type {
+                image::ColorType::L8 => todo!(),
+                image::ColorType::La8 => todo!(),
+                image::ColorType::Rgb8 => {
+                    let info = ImageInfo::rgb8(w, h);
+                    ImageView::new(info, &buf)
+                }
+                image::ColorType::Rgba8 => {
+                    let info = ImageInfo::rgba8(w, h);
+                    ImageView::new(info, &buf)
+                }
+                image::ColorType::L16 => todo!(),
+                image::ColorType::La16 => todo!(),
+                image::ColorType::Rgb16 => todo!(),
+                image::ColorType::Rgba16 => todo!(),
+                image::ColorType::Rgb32F => todo!(),
+                image::ColorType::Rgba32F => todo!(),
+                _ => todo!(),
+            };
 
             log::info!("Read image to vec");
             let im = context.make_gpu_image("image-001", &image);
@@ -94,7 +140,7 @@ fn main() {
         }
 
         if context.windows.is_empty() {
-            context.exit(0.into());
+            context.request_queue.push_back(Request::Exit);
         }
     });
 }
