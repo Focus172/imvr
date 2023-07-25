@@ -1,5 +1,4 @@
-use crate::buffers::UniformsBuffer;
-use crate::gpu::GpuImage;
+use crate::gpu::{GpuImage, ToStd140, UniformsBuffer};
 use glam::Vec3;
 use glam::{Affine2, Vec2};
 use wgpu::Color;
@@ -243,7 +242,7 @@ pub struct WindowUniformsStd140 {
     transform: Mat3x3,
 }
 
-unsafe impl crate::buffers::ToStd140 for WindowUniforms {
+unsafe impl ToStd140 for WindowUniforms {
     type Output = WindowUniformsStd140;
 
     fn to_std140(&self) -> Self::Output {

@@ -1,6 +1,6 @@
 #![feature(exitcode_exit_method)]
 
-mod buffers;
+mod buffer;
 mod context;
 mod gpu;
 mod image_info;
@@ -9,68 +9,48 @@ mod image_info;
 mod events;
 mod window;
 
-use std::{path::PathBuf, process::ExitCode, time::Instant};
+use std::{path::PathBuf, process::ExitCode, sync::Arc};
+
+use buffer::ImagePrebuffer;
+use gpu::GpuContext;
 
 use crate::{
+    buffer::PrebufferMessage,
     context::Context,
     events::Request,
     image_info::{ImageInfo, ImageView},
-    window::WindowOptions,
 };
 
 const IMG_DIR: &str = "/Users/evan/Pictures/anime";
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     env_logger::init();
 
-    let (mut context, event_loop) = Context::new().unwrap();
+    let (mut context, event_loop) = Context::new()?;
 
-    let mut files: Vec<PathBuf> = std::fs::read_dir(IMG_DIR)
-        .unwrap()
+    let mut files: Vec<PathBuf> = std::fs::read_dir(IMG_DIR)?
         .map(|f| f.unwrap().path())
         .collect();
 
-    let mut next_image = Some(image::open(files.pop().unwrap()).unwrap());
-
-    let mut image_set = false;
+    let mut next_image = None;
 
     let mut current_win_id: Option<usize> = None;
+    let mut gpu: Option<Arc<GpuContext>> = None;
 
     // TODO: Parse args to create an some initial requests
 
     context.request_queue.push_back(Request::OpenWindow);
-    context
-        .request_queue
-        .push_back(Request::ShowImage(files.pop().unwrap()));
 
-    let (tx_img, rx_img) = std::sync::mpsc::channel();
-    let (tx_path, rx_path) = std::sync::mpsc::channel::<PathBuf>();
+    // HACK: nothing happens unless i do this
+    context.request_queue.push_back(Request::NextImage);
 
+    let (mut prebuffer, (tx, rx)) = ImagePrebuffer::new();
     std::thread::spawn(move || {
-        for path in rx_path {
-            let start = Instant::now();
-
-            // let butes = std::fs::read(path).unwrap();
-            // tx_img.send(butes).unwrap();
-
-            let img = image::open(path).unwrap();
-            tx_img.send(img).unwrap();
-
-            let el = start.elapsed();
-            log::error!("Opening image took: {:?} ", el);
-        }
+        _ = prebuffer.run();
     });
 
     event_loop.run(move |event, event_loop, control_flow| {
         *control_flow = winit::event_loop::ControlFlow::Wait;
-
-        if current_win_id.is_none() {
-            log::info!("imvr: creating main window");
-            let window_id = context
-                .create_window(event_loop, "image", Default::default())
-                .unwrap();
-            _ = current_win_id.insert(window_id);
-        }
 
         context.handle_event(event, event_loop);
 
@@ -79,75 +59,64 @@ fn main() {
 
         // context.run_requests(event_loop, control_flow);
 
-        while let Some(req) = context.request_queue.pop_front() {
-            match req {
-                Request::NextImage => {
-                    tx_path.send(files.pop().unwrap()).unwrap();
-                    _ = next_image.insert(rx_img.recv().unwrap());
-                }
-                Request::Exit => {
-                    // join all the processing threads
-                    ExitCode::from(0).exit_process()
-                }
-                _ => {}
+        match context.request_queue.pop_front().unwrap_or(Request::None) {
+            // match req {
+            Request::NextImage => {
+                log::warn!("Got a next image event");
+                _ = tx.send(PrebufferMessage::LoadPath(files.pop().unwrap()));
+                _ = next_image.insert(rx.recv().unwrap());
             }
+            Request::Exit => {
+                // join all the processing threads
+                ExitCode::from(0).exit_process()
+            }
+            Request::Resize { size, window_id } => {
+                if size.x > 0 && size.y > 0 {
+                    let size = glam::UVec2::from_array([size.x, size.y]);
+                    let _ = context.resize_window(window_id, size, gpu.as_ref().unwrap());
+                }
+            }
+            Request::Redraw { window_id } => {
+                context
+                    .render_window(window_id, gpu.as_ref().unwrap())
+                    .unwrap();
+            }
+            Request::OpenWindow => {
+                log::info!("imvr: creating main window");
+
+                // TODO: currently this doesn't support making multipul windows which is sad
+                if gpu.is_some() {
+                    unimplemented!()
+                }
+                let (window_id, new_gpu) =
+                    context.create_window(event_loop, "image", None).unwrap();
+
+                let a_gpu = Arc::new(new_gpu);
+                _ = tx.send(PrebufferMessage::InitGpu(a_gpu.clone()));
+                log::info!("Created gpu thing");
+
+                // needed to get reader one step ahead writer
+                _ = tx.send(PrebufferMessage::LoadPath(files.pop().unwrap()));
+
+                _ = gpu.insert(a_gpu);
+                _ = current_win_id.insert(window_id);
+            }
+            Request::ShowImage(_) => todo!(),
+            Request::None => {}
         }
 
-        if let Some(raw_img) = next_image.take() {
-            let h = raw_img.height();
-            let w = raw_img.width();
-            // let ctype = img.color();
-            let color_type = raw_img.color();
-
-            log::warn!("Color type is: {:?}", color_type);
-            log::warn!("imvr: setting the image thing");
-
-            let start = Instant::now();
-
-            let buf: Vec<u8> = raw_img.into_bytes();
-
-            let el = start.elapsed();
-            log::error!("Reading image took: {:?} ", el);
-
-            let start = Instant::now();
-
-            let image = match color_type {
-                image::ColorType::L8 => todo!(),
-                image::ColorType::La8 => todo!(),
-                image::ColorType::Rgb8 => {
-                    let info = ImageInfo::rgb8(w, h);
-                    ImageView::new(info, &buf)
-                }
-                image::ColorType::Rgba8 => {
-                    let info = ImageInfo::rgba8(w, h);
-                    ImageView::new(info, &buf)
-                }
-                image::ColorType::L16 => todo!(),
-                image::ColorType::La16 => todo!(),
-                image::ColorType::Rgb16 => todo!(),
-                image::ColorType::Rgba16 => todo!(),
-                image::ColorType::Rgb32F => todo!(),
-                image::ColorType::Rgba32F => todo!(),
-                _ => todo!(),
-            };
-
-            let el = start.elapsed();
-            log::error!("Parsing the image took: {:?} ", el);
-
-            let start = Instant::now();
-
-            let im = context.make_gpu_image("image-001", &image);
-
-            let el = start.elapsed();
-            log::error!("Making the gpu buffger took: {:?} ", el);
-
+        if let Some(gpu_img) = next_image.take() {
+            log::info!("rendering thing image");
             let window = &mut context.windows[current_win_id.unwrap()];
+            let s = gpu_img.info().size;
+            context.request_queue.push_back(Request::Resize {
+                size: s,
+                window_id: window.id(),
+            });
 
-            window.image = Some(im);
+            window.image = Some(gpu_img);
             window.uniforms.mark_dirty(true);
             window.window.request_redraw();
-
-            image_set = true;
         }
 
         if context.windows.is_empty() {

@@ -1,14 +1,14 @@
 use crate::events::Request;
 use crate::ImageView;
-use crate::WindowOptions;
+
 use crate::{
-    buffers::UniformsBuffer,
-    gpu::{GpuContext, GpuImage},
+    gpu::{GpuContext, GpuImage, UniformsBuffer},
     window::{Window, WindowUniforms},
 };
 use anyhow::anyhow;
 use glam::Affine2;
 use std::collections::VecDeque;
+use winit::window::WindowButtons;
 use winit::{
     event::{ElementState, Event, KeyEvent, WindowEvent},
     event_loop::{EventLoop, EventLoopWindowTarget},
@@ -20,9 +20,6 @@ use winit::{
 pub struct Context {
     /// The wgpu instance to create surfaces with.
     pub instance: wgpu::Instance,
-
-    /// GPU related context that can not be initialized until we have a valid surface.
-    pub gpu: Option<GpuContext>,
 
     /// The swap chain format to use.
     pub swap_chain_format: wgpu::TextureFormat,
@@ -48,7 +45,6 @@ impl Context {
         Ok((
             Self {
                 instance,
-                gpu: None,
                 swap_chain_format: wgpu::TextureFormat::Bgra8Unorm,
                 windows: Vec::new(),
                 // mouse_cache: Default::default(),
@@ -64,33 +60,24 @@ impl Context {
         &mut self,
         event_loop: &EventLoopWindowTarget<()>,
         title: impl Into<String>,
-        options: WindowOptions,
-    ) -> anyhow::Result<usize> {
-        let fullscreen = if options.fullscreen {
-            Some(winit::window::Fullscreen::Borderless(None))
-        } else {
-            None
-        };
+        gpu: Option<GpuContext>,
+    ) -> anyhow::Result<(usize, GpuContext)> {
         let mut window = winit::window::WindowBuilder::new()
             .with_title(title)
-            .with_visible(!options.start_hidden)
-            .with_resizable(options.resizable)
-            .with_decorations(!options.borderless)
-            .with_fullscreen(fullscreen);
-
-        if let Some(size) = options.size {
-            window = window.with_inner_size(winit::dpi::PhysicalSize::new(size[0], size[1]));
-        }
+            .with_visible(true)
+            .with_resizable(true)
+            .with_decorations(false)
+            .with_transparent(true)
+            .with_enabled_buttons(WindowButtons::empty())
+            .with_fullscreen(None);
+        // .with_inner_size(winit::dpi::PhysicalSize::new(size[0], size[1]));
 
         let window = window.build(event_loop)?;
         let surface = unsafe { self.instance.create_surface(&window) }.unwrap();
 
-        let gpu = match &self.gpu {
+        let gpu = match gpu {
             Some(x) => x,
-            None => {
-                let gpu = GpuContext::new(&self.instance, self.swap_chain_format, &surface)?;
-                self.gpu.insert(gpu)
-            }
+            None => GpuContext::new(&self.instance, self.swap_chain_format, &surface)?,
         };
 
         let size = glam::UVec2::new(window.inner_size().width, window.inner_size().height);
@@ -103,8 +90,8 @@ impl Context {
 
         let window = Window {
             window,
-            preserve_aspect_ratio: options.preserve_aspect_ratio,
-            background_color: options.background_color,
+            preserve_aspect_ratio: true,
+            background_color: wgpu::Color::default(),
             surface,
             uniforms,
             image: None,
@@ -113,7 +100,8 @@ impl Context {
 
         self.windows.push(window);
         let index = self.windows.len() - 1;
-        Ok(index)
+
+        Ok((index, gpu))
     }
 
     /// Destroy a window.
@@ -128,39 +116,32 @@ impl Context {
         Ok(())
     }
 
-    /// Upload an image to the GPU.
-    pub fn make_gpu_image(&self, name: impl Into<String>, image: &ImageView) -> GpuImage {
-        let gpu = self.gpu.as_ref().unwrap();
-        GpuImage::from_data(
-            name.into(),
-            &gpu.device,
-            &gpu.image_bind_group_layout,
-            image,
-        )
-    }
-
     /// Resize a window.
-    #[allow(unused)]
-    fn resize_window(&mut self, window_id: WindowId, new_size: glam::UVec2) -> anyhow::Result<()> {
+    pub fn resize_window(
+        &mut self,
+        window_id: WindowId,
+        new_size: glam::UVec2,
+        gpu: &GpuContext,
+    ) -> anyhow::Result<()> {
         let window = self
             .windows
             .iter_mut()
             .find(|w| w.id() == window_id)
             .ok_or(anyhow!("Invalid window id: {:?}", window_id))?;
 
-        let gpu = self.gpu.as_ref().unwrap();
         configure_surface(
             new_size,
             &window.surface,
             self.swap_chain_format,
             &gpu.device,
         );
+
         window.uniforms.mark_dirty(true);
         Ok(())
     }
 
     /// Render the contents of a window.
-    fn render_window(&mut self, window_id: WindowId) -> anyhow::Result<()> {
+    pub fn render_window(&mut self, window_id: WindowId, gpu: &GpuContext) -> anyhow::Result<()> {
         let window = self
             .windows
             .iter_mut()
@@ -177,7 +158,6 @@ impl Context {
             .get_current_texture()
             .expect("Failed to acquire next frame");
 
-        let gpu = self.gpu.as_ref().unwrap();
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
 
         if window.uniforms.is_dirty() {
@@ -233,16 +213,19 @@ impl Context {
         match event {
             Event::WindowEvent { window_id, event } => match event {
                 WindowEvent::Resized(new_size) => {
-                    if new_size.width > 0 && new_size.height > 0 {
-                        let size = glam::UVec2::from_array([new_size.width, new_size.height]);
-                        let _ = self.resize_window(window_id, size);
-                    }
+                    self.request_queue.push_back(Request::Resize {
+                        size: glam::UVec2::new(new_size.width, new_size.height),
+                        window_id,
+                    });
+                    self.request_queue.push_back(Request::Redraw { window_id });
                 }
                 WindowEvent::KeyboardInput { event, .. } => self.handle_keypress(event),
                 WindowEvent::CloseRequested => self.destroy_window(window_id).unwrap(),
                 _ => {}
             },
-            Event::RedrawRequested(window_id) => self.render_window(window_id).unwrap(),
+            Event::RedrawRequested(window_id) => {
+                self.request_queue.push_back(Request::Redraw { window_id })
+            }
             // If we have nothing more to do, clean the background tasks.
             // Event::MainEventsCleared => self.background_tasks.retain(|task| !task.is_done()),
             _ => {}

@@ -23,11 +23,21 @@ impl<T> BackgroundThread<T> {
 
 use std::path::PathBuf;
 
+use winit::window::WindowId;
+
 pub enum Request {
     NextImage,
     OpenWindow,
     ShowImage(PathBuf),
     Exit,
+    Resize {
+        size: glam::UVec2,
+        window_id: WindowId,
+    },
+    Redraw {
+        window_id: WindowId,
+    },
+    None,
 }
 
 trait EventParser<E> {
