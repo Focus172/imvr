@@ -9,14 +9,11 @@ use winit::{
     window::WindowId,
 };
 
-use crate::window::WindowIdent;
-
 use super::{EventParser, Request};
 
 /// Module for parsing winit events into requests
-#[derive()]
 pub struct WinitEventHandler {
-    identity_map: Arc<Mutex<BTreeMap<WindowId, WindowIdent>>>,
+    identity_map: Arc<Mutex<BTreeMap<WindowId, usize>>>,
 }
 
 impl<'a> EventParser<Event<'a, ()>> for WinitEventHandler {
@@ -34,24 +31,24 @@ impl<'a> EventParser<Event<'a, ()>> for WinitEventHandler {
         // Perform default actions for events.
         match event {
             Event::WindowEvent { window_id, event } => {
-                let window_ident = self.ident_from_id(&window_id);
+                let window_index = self.index_from_window_id(&window_id);
                 match event {
                     WindowEvent::Resized(new_size) => Some(Request::Multiple(vec![
                         Request::Resize {
                             size: (new_size.width, new_size.height).into(),
-                            window_ident,
+                            window_index,
                         },
-                        Request::Redraw { window_ident },
+                        Request::Redraw { window_index },
                     ])),
                     WindowEvent::KeyboardInput { event, .. } => self.handle_keypress(event),
-                    WindowEvent::CloseRequested => Some(Request::CloseWindow { window_ident }),
+                    WindowEvent::CloseRequested => Some(Request::CloseWindow { window_index }),
                     // WindowEvent::Focused(_) => todo!(),
                     // WindowEvent::ModifiersChanged(_) => todo!(),
                     _ => None,
                 }
             }
             Event::RedrawRequested(window_id) => Some(Request::Redraw {
-                window_ident: self.ident_from_id(&window_id),
+                window_index: self.index_from_window_id(&window_id),
             }),
             // Event::NewEvents(_) => todo!(),
             // Event::Suspended => todo!(),
@@ -68,7 +65,7 @@ impl<'a> EventParser<Event<'a, ()>> for WinitEventHandler {
 }
 
 impl WinitEventHandler {
-    pub fn new(identity_map: Arc<Mutex<BTreeMap<WindowId, WindowIdent>>>) -> Self {
+    pub fn new(identity_map: Arc<Mutex<BTreeMap<WindowId, usize>>>) -> Self {
         Self { identity_map }
     }
 
@@ -84,7 +81,7 @@ impl WinitEventHandler {
         }
     }
 
-    pub fn ident_from_id(&self, id: &WindowId) -> WindowIdent {
+    pub fn index_from_window_id(&self, id: &WindowId) -> usize {
         *self.identity_map.lock().unwrap().get(id).unwrap()
     }
 }

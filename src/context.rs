@@ -1,10 +1,15 @@
-use crate::window::WindowIdent;
+use crate::events::Request;
+use crate::gpu::GpuImage;
+use crate::image_info::{ImageInfo, ImageView, PixelFormat};
 use crate::{
     gpu::{GpuContext, UniformsBuffer},
     window::{Window, WindowUniforms},
 };
 use glam::Affine2;
+use image::GenericImageView;
+use std::cell::OnceCell;
 use std::collections::BTreeMap;
+use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use winit::window::WindowButtons;
 use winit::{
@@ -23,7 +28,9 @@ pub struct Context {
     /// The windows.
     pub windows: Vec<Window>,
 
-    pub identity_map: Arc<Mutex<BTreeMap<WindowId, WindowIdent>>>,
+    pub gpu: OnceCell<GpuContext>,
+
+    pub identity_map: Arc<Mutex<BTreeMap<WindowId, usize>>>,
 }
 
 impl Context {
@@ -42,10 +49,79 @@ impl Context {
                 instance,
                 swap_chain_format: wgpu::TextureFormat::Bgra8Unorm,
                 windows: Vec::new(),
+                gpu: OnceCell::new(),
                 identity_map: Arc::new(Mutex::new(BTreeMap::new())),
             },
             event_loop,
         ))
+    }
+
+    pub fn handle_request(&mut self, req: Request, event_loop: &EventLoopWindowTarget<()>) {
+        match req {
+            Request::Multiple(reqs) => {
+                for req in reqs {
+                    self.handle_request(req, event_loop);
+                }
+            }
+            Request::ShowImage { path, window_index } => {
+                if self.gpu.get().is_none() || self.windows.is_empty() {
+                    log::warn!("Don't try to set the image before you have a valid context");
+                    return;
+                }
+                let img = image::open(path).unwrap();
+                let (w, h) = img.dimensions();
+                let color_type = img.color();
+                log::info!("Image color type is: {:?}", color_type);
+
+                let buf: Vec<u8> = img.into_bytes();
+
+                let image = match color_type {
+                    image::ColorType::L8 => todo!(),
+                    image::ColorType::La8 => todo!(),
+                    image::ColorType::Rgb8 => {
+                        let info = ImageInfo::new(PixelFormat::Rgb8, w, h);
+                        ImageView::new(info, &buf)
+                    }
+                    image::ColorType::Rgba8 => todo!(),
+                    _ => todo!(),
+                };
+
+                let gpu_im = GpuImage::from_data(
+                    "imvr_gpu_image".into(),
+                    &self.gpu.get().unwrap().device,
+                    &self.gpu.get().unwrap().image_bind_group_layout,
+                    &image,
+                );
+
+                let window = &mut self.windows[window_index];
+
+                window.image = Some(gpu_im);
+                window.uniforms.mark_dirty(true);
+                window.window.request_redraw();
+            }
+            Request::Exit => {
+                // join all the processing threads
+                ExitCode::from(0).exit_process()
+            }
+            Request::Resize { size, window_index } => {
+                if size.x > 0 && size.y > 0 {
+                    let size = glam::UVec2::from_array([size.x, size.y]);
+                    let _ = self.resize_window(window_index, size);
+                }
+            }
+            Request::Redraw { window_index } => {
+                self.render_window(window_index).unwrap();
+            }
+            Request::OpenWindow => {
+                log::info!("imvr: creating main window");
+                self.create_window(event_loop, "image").unwrap();
+            }
+            Request::CloseWindow { window_index } => {
+                log::error!("This is really unsafe as it doesn't update any of the idents and so they end up pointing");
+                log::error!("garbage and can be used for evil. Eh i will fix it later");
+                self.windows.remove(window_index);
+            }
+        }
     }
 
     /// Create a window.
@@ -53,8 +129,7 @@ impl Context {
         &mut self,
         event_loop: &EventLoopWindowTarget<()>,
         title: impl Into<String>,
-        gpu: Option<GpuContext>,
-    ) -> anyhow::Result<(usize, GpuContext)> {
+    ) -> anyhow::Result<()> {
         let window = winit::window::WindowBuilder::new()
             .with_title(title)
             .with_visible(true)
@@ -68,7 +143,7 @@ impl Context {
         let window = window.build(event_loop)?;
         let surface = unsafe { self.instance.create_surface(&window) }.unwrap();
 
-        let gpu = match gpu {
+        let gpu = match self.gpu.take() {
             Some(x) => x,
             None => GpuContext::new(&self.instance, self.swap_chain_format, &surface)?,
         };
@@ -92,31 +167,24 @@ impl Context {
         };
 
         let index = self.windows.len();
-        let ident = WindowIdent::new(
-            //Some(title.into()),
-            index,
-        );
 
-        self.identity_map.lock().unwrap().insert(window.id(), ident);
+        self.identity_map.lock().unwrap().insert(window.id(), index);
         self.windows.push(window);
 
-        Ok((index, gpu))
+        self.gpu.set(gpu).unwrap();
+
+        Ok(())
     }
 
     /// Resize a window.
-    pub fn resize_window(
-        &mut self,
-        ident: WindowIdent,
-        new_size: glam::UVec2,
-        gpu: &GpuContext,
-    ) -> anyhow::Result<()> {
-        let window = self.windows.get_mut(ident.index).unwrap();
+    pub fn resize_window(&mut self, index: usize, new_size: glam::UVec2) -> anyhow::Result<()> {
+        let window = self.windows.get_mut(index).unwrap();
 
         configure_surface(
             new_size,
             &window.surface,
             self.swap_chain_format,
-            &gpu.device,
+            &self.gpu.get().unwrap().device,
         );
 
         window.uniforms.mark_dirty(true);
@@ -125,8 +193,8 @@ impl Context {
     }
 
     /// Render the contents of a window.
-    pub fn render_window(&mut self, ident: WindowIdent, gpu: &GpuContext) -> anyhow::Result<()> {
-        let window = self.windows.get_mut(ident.index).unwrap();
+    pub fn render_window(&mut self, index: usize) -> anyhow::Result<()> {
+        let window = self.windows.get_mut(index).unwrap();
 
         let image = match &window.image {
             Some(x) => x,
@@ -138,12 +206,13 @@ impl Context {
             .get_current_texture()
             .expect("Failed to acquire next frame");
 
-        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        let device = &self.gpu.get().unwrap().device;
+        let mut encoder = device.create_command_encoder(&Default::default());
 
         if window.uniforms.is_dirty() {
             window
                 .uniforms
-                .update_from(&gpu.device, &mut encoder, &window.calculate_uniforms());
+                .update_from(device, &mut encoder, &window.calculate_uniforms());
         }
 
         // --------------- RENDER PASS BEGIN ------------------- //
@@ -163,14 +232,19 @@ impl Context {
             depth_stencil_attachment: None,
         });
 
-        render_pass.set_pipeline(&gpu.window_pipeline);
+        render_pass.set_pipeline(&self.gpu.get().unwrap().window_pipeline);
         render_pass.set_bind_group(0, window.uniforms.bind_group(), &[]);
         render_pass.set_bind_group(1, image.bind_group(), &[]);
         render_pass.draw(0..6, 0..1);
         drop(render_pass);
         // --------------- RENDER PASS END ------------------- //
 
-        gpu.queue.submit(std::iter::once(encoder.finish()));
+        self.gpu
+            .get()
+            .unwrap()
+            .queue
+            .submit(std::iter::once(encoder.finish()));
+
         frame.present();
         Ok(())
     }

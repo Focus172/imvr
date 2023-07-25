@@ -6,6 +6,7 @@ use core::num::NonZeroU64;
 
 use super::window::WindowUniforms;
 
+#[derive(Debug)]
 pub struct GpuContext {
     /// The wgpu device to use.
     pub device: wgpu::Device,

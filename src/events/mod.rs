@@ -2,7 +2,6 @@
 // pub mod rpc;
 pub mod system;
 
-use crate::window::WindowIdent;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -19,7 +18,7 @@ pub struct EventHandler {
 }
 
 impl EventHandler {
-    pub fn new(identity_map: Arc<Mutex<BTreeMap<WindowId, WindowIdent>>>) -> Self {
+    pub fn new(identity_map: Arc<Mutex<BTreeMap<WindowId, usize>>>) -> Self {
         let winit_event_handler = WinitEventHandler::new(identity_map);
         Self {
             winit_event_handler,
@@ -35,19 +34,19 @@ pub enum Request {
     Multiple(Vec<Request>),
     ShowImage {
         path: PathBuf,
-        window_ident: WindowIdent,
+        window_index: usize,
     },
     OpenWindow,
     CloseWindow {
-        window_ident: WindowIdent,
+        window_index: usize,
     },
     Exit,
     Resize {
         size: glam::UVec2,
-        window_ident: WindowIdent,
+        window_index: usize,
     },
     Redraw {
-        window_ident: WindowIdent,
+        window_index: usize,
     },
 }
 
