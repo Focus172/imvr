@@ -1,12 +1,13 @@
 use crate::events::Request;
 
+use crate::window::WindowIdent;
 use crate::{
     gpu::{GpuContext, UniformsBuffer},
     window::{Window, WindowUniforms},
 };
 use anyhow::anyhow;
 use glam::Affine2;
-use std::collections::VecDeque;
+use std::collections::BTreeMap;
 use winit::window::WindowButtons;
 use winit::{
     event::{ElementState, Event, KeyEvent, WindowEvent},
@@ -25,6 +26,8 @@ pub struct Context {
 
     /// The windows.
     pub windows: Vec<Window>,
+
+    identity_map: BTreeMap<WindowId, WindowIdent>,
 }
 
 impl Context {
@@ -43,6 +46,7 @@ impl Context {
                 instance,
                 swap_chain_format: wgpu::TextureFormat::Bgra8Unorm,
                 windows: Vec::new(),
+                identity_map: BTreeMap::new(),
             },
             event_loop,
         ))
@@ -91,8 +95,14 @@ impl Context {
             user_transform: Affine2::IDENTITY,
         };
 
+        let index = self.windows.len();
+        let ident = WindowIdent::new(
+            //Some(title.into()),
+            index,
+        );
+
+        self.identity_map.insert(window.id(), ident);
         self.windows.push(window);
-        let index = self.windows.len() - 1;
 
         Ok((index, gpu))
     }
@@ -100,15 +110,11 @@ impl Context {
     /// Resize a window.
     pub fn resize_window(
         &mut self,
-        window_id: WindowId,
+        ident: WindowIdent,
         new_size: glam::UVec2,
         gpu: &GpuContext,
     ) -> anyhow::Result<()> {
-        let window = self
-            .windows
-            .iter_mut()
-            .find(|w| w.id() == window_id)
-            .ok_or(anyhow!("Invalid window id: {:?}", window_id))?;
+        let window = self.windows.get_mut(ident.index).unwrap();
 
         configure_surface(
             new_size,
@@ -118,16 +124,13 @@ impl Context {
         );
 
         window.uniforms.mark_dirty(true);
+
         Ok(())
     }
 
     /// Render the contents of a window.
-    pub fn render_window(&mut self, window_id: WindowId, gpu: &GpuContext) -> anyhow::Result<()> {
-        let window = self
-            .windows
-            .iter_mut()
-            .find(|w| w.id() == window_id)
-            .ok_or(anyhow!("Invalid window id: {:?}", window_id))?;
+    pub fn render_window(&mut self, ident: WindowIdent, gpu: &GpuContext) -> anyhow::Result<()> {
+        let window = self.windows.get_mut(ident.index).unwrap();
 
         let image = match &window.image {
             Some(x) => x,
@@ -194,18 +197,25 @@ impl Context {
         // Perform default actions for events.
         match event {
             Event::WindowEvent { window_id, event } => match event {
-                WindowEvent::Resized(new_size) => Some(Request::Multiple(vec![
-                    Request::Resize {
-                        size: glam::UVec2::new(new_size.width, new_size.height),
-                        window_id,
-                    },
-                    Request::Redraw { window_id },
-                ])),
+                WindowEvent::Resized(new_size) => {
+                    let ident = self.identity_map.get(&window_id).unwrap().clone();
+                    Some(Request::Multiple(vec![
+                        Request::Resize {
+                            size: glam::UVec2::new(new_size.width, new_size.height),
+                            window_id: ident,
+                        },
+                        Request::Redraw { window_id: ident },
+                    ]))
+                }
                 WindowEvent::KeyboardInput { event, .. } => self.handle_keypress(event),
-                WindowEvent::CloseRequested => Some(Request::CloseWindow { window_id }),
+                WindowEvent::CloseRequested => Some(Request::CloseWindow {
+                    window_id: self.identity_map.get(&window_id).unwrap().clone(),
+                }),
                 _ => None,
             },
-            Event::RedrawRequested(window_id) => Some(Request::Redraw { window_id }),
+            Event::RedrawRequested(window_id) => Some(Request::Redraw {
+                window_id: self.identity_map.get(&window_id).unwrap().clone(),
+            }),
             // If we have nothing more to do, clean the background tasks.
             // Event::MainEventsCleared => self.background_tasks.retain(|task| !task.is_done()),
             _ => None,

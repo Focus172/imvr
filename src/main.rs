@@ -13,6 +13,7 @@ use std::{collections::VecDeque, process::ExitCode, sync::Arc};
 
 use gpu::GpuContext;
 use image::GenericImageView;
+use window::WindowIdent;
 
 use crate::{
     context::Context,
@@ -37,6 +38,7 @@ fn main() -> anyhow::Result<()> {
     request_queue.push_back(Request::OpenWindow);
     request_queue.push_back(Request::ShowImage {
         path: TEST_IMG.into(),
+        window_id: WindowIdent::any(),
     });
 
     event_loop.run(move |event, event_loop, control_flow| {
@@ -58,7 +60,7 @@ fn main() -> anyhow::Result<()> {
                         // parse the damn thing
                     }
                 }
-                Request::ShowImage { path } => {
+                Request::ShowImage { path, window_id } => {
                     log::warn!("Got a next image event");
 
                     let img = image::open(path).unwrap();
@@ -100,7 +102,7 @@ fn main() -> anyhow::Result<()> {
                     );
 
                     log::info!("rendering thing image");
-                    let window = &mut context.windows[current_win_id.unwrap()];
+                    let window = &mut context.windows[window_id.index];
 
                     window.image = Some(gpu_im);
                     window.uniforms.mark_dirty(true);
@@ -140,12 +142,9 @@ fn main() -> anyhow::Result<()> {
                     _ = current_win_id.insert(window_id);
                 }
                 Request::CloseWindow { window_id } => {
-                    let index = context
-                        .windows
-                        .iter()
-                        .position(|w| w.id() == window_id)
-                        .unwrap();
-                    context.windows.remove(index);
+                    log::error!("This is really unsafe as it doesn't update any of the idents and so they end up pointing");
+                    log::error!("garbage and can be used for evil. Eh i will fix it later");
+                    context.windows.remove(window_id.index);
                 }
             }
         }

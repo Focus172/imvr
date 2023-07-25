@@ -1,8 +1,31 @@
 use crate::gpu::{GpuImage, ToStd140, UniformsBuffer};
 use glam::Vec3;
 use glam::{Affine2, Vec2};
+use serde::{Deserialize, Serialize};
 use wgpu::Color;
 use winit::window::WindowId;
+
+#[derive(Serialize, Deserialize, Clone, Copy)]
+pub struct WindowIdent {
+    // pub name: Option<String>,
+    pub index: usize,
+}
+
+impl WindowIdent {
+    pub fn new(
+        // name: Option<String>,
+        index: usize,
+    ) -> Self {
+        Self {
+            //name,
+            index,
+        }
+    }
+
+    pub fn any() -> Self {
+        Self { index: 0 }
+    }
+}
 
 /// Window capable of displaying images using wgpu.
 pub struct Window {

@@ -1,59 +1,41 @@
 // mod input;
-// mod rpc;
+// pub mod rpc;
 // mod system;
-
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
-
-pub struct BackgroundThread<T> {
-    done: Arc<AtomicBool>,
-    handle: std::thread::JoinHandle<T>,
-}
-
-impl<T> BackgroundThread<T> {
-    pub fn is_done(&self) -> bool {
-        self.done.load(Ordering::Acquire)
-    }
-
-    pub fn join(self) -> std::thread::Result<T> {
-        self.handle.join()
-    }
-}
 
 use std::path::PathBuf;
 
-use winit::window::WindowId;
+use serde::{Deserialize, Serialize};
 
+use crate::window::WindowIdent;
+
+#[derive(Serialize, Deserialize)]
 pub enum Request {
     Multiple(Vec<Request>),
     ShowImage {
         path: PathBuf,
-        // window_id: WindowId,
+        window_id: WindowIdent,
     },
     OpenWindow,
     CloseWindow {
-        window_id: WindowId,
+        window_id: WindowIdent,
     },
     Exit,
     Resize {
         size: glam::UVec2,
-        window_id: WindowId,
+        window_id: WindowIdent,
     },
     Redraw {
-        window_id: WindowId,
+        window_id: WindowIdent,
     },
 }
 
 trait EventParser<E> {
-    fn new(req_handle: RequestQueueHandle) -> Self;
+    fn new() -> Self;
 
     /// Takes in an event and returns the amount of requests generated
     /// from the event wrapped in a result.
-    fn parse(event: E) -> anyhow::Result<usize>;
+    fn parse(event: E) -> Option<Request>;
 
     /// Closes the event handler haulting any events
     fn close() -> !;
 }
-
-struct RequestQueueHandle {}
