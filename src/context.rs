@@ -1,8 +1,7 @@
 use crate::events::Request;
-use crate::ImageView;
 
 use crate::{
-    gpu::{GpuContext, GpuImage, UniformsBuffer},
+    gpu::{GpuContext, UniformsBuffer},
     window::{Window, WindowUniforms},
 };
 use anyhow::anyhow;
@@ -16,7 +15,7 @@ use winit::{
     window::WindowId,
 };
 
-/// The global context managing all windows and the main event loop.
+/// The global context managing all windows and producing winit events
 pub struct Context {
     /// The wgpu instance to create surfaces with.
     pub instance: wgpu::Instance,
@@ -26,9 +25,6 @@ pub struct Context {
 
     /// The windows.
     pub windows: Vec<Window>,
-
-    /// Current Requests to for actions
-    pub request_queue: VecDeque<Request>,
 }
 
 impl Context {
@@ -47,9 +43,6 @@ impl Context {
                 instance,
                 swap_chain_format: wgpu::TextureFormat::Bgra8Unorm,
                 windows: Vec::new(),
-                // mouse_cache: Default::default(),
-                // key_mods: HashMap::new(),
-                request_queue: VecDeque::new(),
             },
             event_loop,
         ))
@@ -102,18 +95,6 @@ impl Context {
         let index = self.windows.len() - 1;
 
         Ok((index, gpu))
-    }
-
-    /// Destroy a window.
-    #[allow(unused)]
-    fn destroy_window(&mut self, window_id: WindowId) -> anyhow::Result<()> {
-        let index = self
-            .windows
-            .iter()
-            .position(|w| w.id() == window_id)
-            .ok_or(anyhow!("Invalid window id: {:?}", window_id))?;
-        self.windows.remove(index);
-        Ok(())
     }
 
     /// Resize a window.
@@ -195,12 +176,13 @@ impl Context {
         Ok(())
     }
 
-    /// Handle an event from the event loop.
+    /// Handle an event from the event loop and produce a list of events to
+    /// append to the main list
     pub fn handle_event(
         &mut self,
         event: winit::event::Event<()>,
         _event_loop: &EventLoopWindowTarget<()>,
-    ) {
+    ) -> Option<Request> {
         // self.mouse_cache.handle_event(&event);
 
         // Run window event handlers.
@@ -212,35 +194,33 @@ impl Context {
         // Perform default actions for events.
         match event {
             Event::WindowEvent { window_id, event } => match event {
-                WindowEvent::Resized(new_size) => {
-                    self.request_queue.push_back(Request::Resize {
+                WindowEvent::Resized(new_size) => Some(Request::Multiple(vec![
+                    Request::Resize {
                         size: glam::UVec2::new(new_size.width, new_size.height),
                         window_id,
-                    });
-                    self.request_queue.push_back(Request::Redraw { window_id });
-                }
+                    },
+                    Request::Redraw { window_id },
+                ])),
                 WindowEvent::KeyboardInput { event, .. } => self.handle_keypress(event),
-                WindowEvent::CloseRequested => self.destroy_window(window_id).unwrap(),
-                _ => {}
+                WindowEvent::CloseRequested => Some(Request::CloseWindow { window_id }),
+                _ => None,
             },
-            Event::RedrawRequested(window_id) => {
-                self.request_queue.push_back(Request::Redraw { window_id })
-            }
+            Event::RedrawRequested(window_id) => Some(Request::Redraw { window_id }),
             // If we have nothing more to do, clean the background tasks.
             // Event::MainEventsCleared => self.background_tasks.retain(|task| !task.is_done()),
-            _ => {}
+            _ => None,
         }
     }
 
-    fn handle_keypress(&mut self, key: KeyEvent) {
+    fn handle_keypress(&mut self, key: KeyEvent) -> Option<Request> {
         match (key.physical_key, key.state, key.repeat) {
-            (KeyCode::KeyQ, ElementState::Pressed, _) => {
-                self.request_queue.push_back(Request::Exit)
-            }
+            (KeyCode::KeyQ, ElementState::Pressed, _) => Some(Request::Exit),
             (KeyCode::KeyL, ElementState::Pressed, _) => {
-                self.request_queue.push_back(Request::NextImage)
+                log::warn!("This key press is not handled rn");
+                // self.request_queue.push_back(Request::NextImage)
+                None
             }
-            (_, _, _) => {}
+            (_, _, _) => None,
         }
     }
 }

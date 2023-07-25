@@ -26,9 +26,15 @@ use std::path::PathBuf;
 use winit::window::WindowId;
 
 pub enum Request {
-    NextImage,
+    Multiple(Vec<Request>),
+    ShowImage {
+        path: PathBuf,
+        // window_id: WindowId,
+    },
     OpenWindow,
-    ShowImage(PathBuf),
+    CloseWindow {
+        window_id: WindowId,
+    },
     Exit,
     Resize {
         size: glam::UVec2,
@@ -37,7 +43,6 @@ pub enum Request {
     Redraw {
         window_id: WindowId,
     },
-    None,
 }
 
 trait EventParser<E> {
