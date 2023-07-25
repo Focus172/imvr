@@ -31,7 +31,7 @@ impl GpuContext {
     ) -> anyhow::Result<Self> {
         let (device, queue) = futures::executor::block_on(get_device(instance, surface))?;
         device.on_uncaptured_error(Box::new(|error| {
-            // panic!("Unhandled WGPU error: {}", error);
+            panic!("Unhandled WGPU error: {}", error);
         }));
 
         let window_bind_group_layout = create_window_bind_group_layout(&device);

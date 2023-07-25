@@ -13,6 +13,7 @@ pub struct ImageInfo {
 
 /// Supported pixel formats.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[allow(unused)]
 pub enum PixelFormat {
     /// 8-bit monochrome data.
     Mono8,
@@ -37,6 +38,7 @@ pub enum PixelFormat {
 ///
 /// See also: <https://en.wikipedia.org/wiki/Alpha_compositing#Straight_versus_premultiplied>
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[allow(unused)]
 pub enum Alpha {
     /// The alpha channel is encoded only in the alpha component of the pixel.
     Unpremultiplied,
@@ -57,64 +59,6 @@ impl ImageInfo {
             pixel_format,
             size: glam::UVec2::new(width, height),
             stride: glam::UVec2::new(stride_x, stride_y),
-        }
-    }
-
-    /// Create a new info struct for an 8-bit monochrome image with the given width and height.
-    pub fn mono8(width: u32, height: u32) -> Self {
-        Self::new(PixelFormat::Mono8, width, height)
-    }
-
-    /// Create a new info struct for an 8-bit monochrome image with with alpha channel and the given width and height.
-    pub fn mono_alpha8(width: u32, height: u32) -> Self {
-        Self::new(
-            PixelFormat::MonoAlpha8(Alpha::Unpremultiplied),
-            width,
-            height,
-        )
-    }
-
-    /// Create a new info struct for an 8-bit monochrome image with premultiplied alpha channel and the given width and height.
-    pub fn mono_alpha8_premultiplied(width: u32, height: u32) -> Self {
-        Self::new(PixelFormat::MonoAlpha8(Alpha::Premultiplied), width, height)
-    }
-
-    /// Create a new info struct for an 8-bit BGR image with the given width and height.
-    pub fn bgr8(width: u32, height: u32) -> Self {
-        Self::new(PixelFormat::Bgr8, width, height)
-    }
-
-    /// Create a new info struct for an 8-bit BGRA image with the given width and height.
-    pub fn bgra8(width: u32, height: u32) -> Self {
-        Self::new(PixelFormat::Bgra8(Alpha::Unpremultiplied), width, height)
-    }
-
-    /// Create a new info struct for an 8-bit BGRA image with premultiplied alpha channel and the given width and height.
-    pub fn bgra8_premultiplied(width: u32, height: u32) -> Self {
-        Self::new(PixelFormat::Bgra8(Alpha::Premultiplied), width, height)
-    }
-
-    /// Create a new info struct for an 8-bit RGB image with the given width and height.
-    pub fn rgb8(width: u32, height: u32) -> Self {
-        Self::new(PixelFormat::Rgb8, width, height)
-    }
-
-    /// Create a new info struct for an 8-bit RGBA image with the given width and height.
-    pub fn rgba8(width: u32, height: u32) -> Self {
-        Self::new(PixelFormat::Rgba8(Alpha::Unpremultiplied), width, height)
-    }
-
-    /// Create a new info struct for an 8-bit RGBA image with premultiplied alpha channel and the given width and height.
-    pub fn rgba8_premultiplied(width: u32, height: u32) -> Self {
-        Self::new(PixelFormat::Rgba8(Alpha::Premultiplied), width, height)
-    }
-
-    /// Get the image size in bytes.
-    pub fn byte_size(self) -> u64 {
-        if self.stride.y >= self.stride.x {
-            u64::from(self.stride.y) * u64::from(self.size.y)
-        } else {
-            u64::from(self.stride.x) * u64::from(self.size.x)
         }
     }
 }
@@ -140,20 +84,6 @@ impl PixelFormat {
     /// Get the bytes per pixel.
     pub fn bytes_per_pixel(self) -> u8 {
         self.byte_depth() * self.channels()
-    }
-
-    /// Get the alpha representation of the pixel format.
-    ///
-    /// Returns [`None`], if the pixel format has no alpha channel.
-    pub fn alpha(self) -> Option<Alpha> {
-        match self {
-            PixelFormat::Mono8 => None,
-            PixelFormat::MonoAlpha8(a) => Some(a),
-            PixelFormat::Bgr8 => None,
-            PixelFormat::Bgra8(a) => Some(a),
-            PixelFormat::Rgb8 => None,
-            PixelFormat::Rgba8(a) => Some(a),
-        }
     }
 }
 

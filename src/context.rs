@@ -1,18 +1,14 @@
-use crate::events::Request;
-
 use crate::window::WindowIdent;
 use crate::{
     gpu::{GpuContext, UniformsBuffer},
     window::{Window, WindowUniforms},
 };
-use anyhow::anyhow;
 use glam::Affine2;
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 use winit::window::WindowButtons;
 use winit::{
-    event::{ElementState, Event, KeyEvent, WindowEvent},
     event_loop::{EventLoop, EventLoopWindowTarget},
-    keyboard::KeyCode,
     window::WindowId,
 };
 
@@ -27,7 +23,7 @@ pub struct Context {
     /// The windows.
     pub windows: Vec<Window>,
 
-    identity_map: BTreeMap<WindowId, WindowIdent>,
+    pub identity_map: Arc<Mutex<BTreeMap<WindowId, WindowIdent>>>,
 }
 
 impl Context {
@@ -46,7 +42,7 @@ impl Context {
                 instance,
                 swap_chain_format: wgpu::TextureFormat::Bgra8Unorm,
                 windows: Vec::new(),
-                identity_map: BTreeMap::new(),
+                identity_map: Arc::new(Mutex::new(BTreeMap::new())),
             },
             event_loop,
         ))
@@ -59,7 +55,7 @@ impl Context {
         title: impl Into<String>,
         gpu: Option<GpuContext>,
     ) -> anyhow::Result<(usize, GpuContext)> {
-        let mut window = winit::window::WindowBuilder::new()
+        let window = winit::window::WindowBuilder::new()
             .with_title(title)
             .with_visible(true)
             .with_resizable(true)
@@ -101,7 +97,7 @@ impl Context {
             index,
         );
 
-        self.identity_map.insert(window.id(), ident);
+        self.identity_map.lock().unwrap().insert(window.id(), ident);
         self.windows.push(window);
 
         Ok((index, gpu))
@@ -177,61 +173,6 @@ impl Context {
         gpu.queue.submit(std::iter::once(encoder.finish()));
         frame.present();
         Ok(())
-    }
-
-    /// Handle an event from the event loop and produce a list of events to
-    /// append to the main list
-    pub fn handle_event(
-        &mut self,
-        event: winit::event::Event<()>,
-        _event_loop: &EventLoopWindowTarget<()>,
-    ) -> Option<Request> {
-        // self.mouse_cache.handle_event(&event);
-
-        // Run window event handlers.
-        // let run_context_handlers = match &mut event {
-        //     Event::WindowEvent(event) => self.run_window_event_handlers(event, event_loop),
-        //     _ => true,
-        // };
-
-        // Perform default actions for events.
-        match event {
-            Event::WindowEvent { window_id, event } => match event {
-                WindowEvent::Resized(new_size) => {
-                    let ident = self.identity_map.get(&window_id).unwrap().clone();
-                    Some(Request::Multiple(vec![
-                        Request::Resize {
-                            size: glam::UVec2::new(new_size.width, new_size.height),
-                            window_id: ident,
-                        },
-                        Request::Redraw { window_id: ident },
-                    ]))
-                }
-                WindowEvent::KeyboardInput { event, .. } => self.handle_keypress(event),
-                WindowEvent::CloseRequested => Some(Request::CloseWindow {
-                    window_id: self.identity_map.get(&window_id).unwrap().clone(),
-                }),
-                _ => None,
-            },
-            Event::RedrawRequested(window_id) => Some(Request::Redraw {
-                window_id: self.identity_map.get(&window_id).unwrap().clone(),
-            }),
-            // If we have nothing more to do, clean the background tasks.
-            // Event::MainEventsCleared => self.background_tasks.retain(|task| !task.is_done()),
-            _ => None,
-        }
-    }
-
-    fn handle_keypress(&mut self, key: KeyEvent) -> Option<Request> {
-        match (key.physical_key, key.state, key.repeat) {
-            (KeyCode::KeyQ, ElementState::Pressed, _) => Some(Request::Exit),
-            (KeyCode::KeyL, ElementState::Pressed, _) => {
-                log::warn!("This key press is not handled rn");
-                // self.request_queue.push_back(Request::NextImage)
-                None
-            }
-            (_, _, _) => None,
-        }
     }
 }
 
