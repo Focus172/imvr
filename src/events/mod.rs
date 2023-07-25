@@ -1,6 +1,6 @@
-mod input;
-mod rpc;
-mod system;
+// mod input;
+// mod rpc;
+// mod system;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -29,3 +29,16 @@ pub enum Request {
     ShowImage(PathBuf),
     Exit,
 }
+
+trait EventParser<E> {
+    fn new(req_handle: RequestQueueHandle) -> Self;
+
+    /// Takes in an event and returns the amount of requests generated
+    /// from the event wrapped in a result.
+    fn parse(event: E) -> anyhow::Result<usize>;
+
+    /// Closes the event handler haulting any events
+    fn close() -> !;
+}
+
+struct RequestQueueHandle {}
