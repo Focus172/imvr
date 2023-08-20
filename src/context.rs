@@ -133,12 +133,12 @@ impl Context {
         let window = winit::window::WindowBuilder::new()
             .with_title(title)
             .with_visible(true)
-            .with_resizable(true)
-            .with_decorations(false)
-            .with_transparent(true)
+            // .with_resizable(true)
+            // .with_decorations(false)
+            // .with_transparent(true)
             .with_enabled_buttons(WindowButtons::empty())
+            // .with_inner_size(winit::dpi::PhysicalSize::new(size[0], size[1]))
             .with_fullscreen(None);
-        // .with_inner_size(winit::dpi::PhysicalSize::new(size[0], size[1]));
 
         let window = window.build(event_loop)?;
         let surface = unsafe { self.instance.create_surface(&window) }.unwrap();
@@ -239,14 +239,16 @@ impl Context {
         drop(render_pass);
         // --------------- RENDER PASS END ------------------- //
 
-        self.gpu
-            .get()
-            .unwrap()
-            .queue
-            .submit(std::iter::once(encoder.finish()));
+        self.gpu().queue.submit(std::iter::once(encoder.finish()));
 
         frame.present();
         Ok(())
+    }
+
+    fn gpu(&self) -> &GpuContext {
+        self.gpu
+            .get()
+            .expect("This should only be called after the first screen is maade.")
     }
 }
 

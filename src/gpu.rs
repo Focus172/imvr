@@ -67,10 +67,6 @@ impl GpuContext {
     }
 }
 
-fn select_power_preference() -> wgpu::PowerPreference {
-    wgpu::PowerPreference::LowPower
-}
-
 /// Get a wgpu device to use.
 async fn get_device(
     instance: &wgpu::Instance,
@@ -78,7 +74,7 @@ async fn get_device(
 ) -> anyhow::Result<(wgpu::Device, wgpu::Queue)> {
     // Find a suitable display adapter.
     let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: select_power_preference(),
+        power_preference: wgpu::PowerPreference::LowPower,
         compatible_surface: Some(surface),
         force_fallback_adapter: false,
     });
@@ -205,7 +201,7 @@ fn create_render_pipeline(
 
 /// A GPU image buffer ready to be used with the rendering pipeline.
 pub struct GpuImage {
-    name: String,
+    _name: String,
     info: ImageInfo,
     bind_group: wgpu::BindGroup,
     _uniforms: wgpu::Buffer,
@@ -291,18 +287,12 @@ impl GpuImage {
         });
 
         Self {
-            name,
+            _name: name,
             info,
             bind_group,
             _uniforms: uniforms,
             _data: data,
         }
-    }
-
-    /// Get the name of the image.
-    #[allow(unused)]
-    pub fn name(&self) -> &str {
-        &self.name
     }
 
     /// Get the image info.
