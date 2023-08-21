@@ -8,9 +8,7 @@ use crate::{
 use glam::Affine2;
 use image::GenericImageView;
 use std::cell::OnceCell;
-use std::collections::BTreeMap;
 use std::process::ExitCode;
-use std::sync::{Arc, Mutex};
 use winit::window::WindowButtons;
 use winit::{
     event_loop::{EventLoop, EventLoopWindowTarget},
@@ -29,8 +27,6 @@ pub struct Context {
     pub windows: Vec<Window>,
 
     pub gpu: OnceCell<GpuContext>,
-
-    pub identity_map: Arc<Mutex<BTreeMap<WindowId, usize>>>,
 }
 
 impl Context {
@@ -50,7 +46,6 @@ impl Context {
                 swap_chain_format: wgpu::TextureFormat::Bgra8Unorm,
                 windows: Vec::new(),
                 gpu: OnceCell::new(),
-                identity_map: Arc::new(Mutex::new(BTreeMap::new())),
             },
             event_loop,
         ))
@@ -63,7 +58,7 @@ impl Context {
                     self.handle_request(req, event_loop);
                 }
             }
-            Request::ShowImage { path, window_index } => {
+            Request::ShowImage { path, window_id } => {
                 if self.gpu.get().is_none() || self.windows.is_empty() {
                     log::warn!("Don't try to set the image before you have a valid context");
                     return;
@@ -93,7 +88,11 @@ impl Context {
                     &image,
                 );
 
-                let window = &mut self.windows[window_index];
+                let window = self
+                    .windows
+                    .iter_mut()
+                    .find(|win| win.id() == window_id.into())
+                    .unwrap();
 
                 window.image = Some(gpu_im);
                 window.uniforms.mark_dirty(true);
@@ -103,23 +102,28 @@ impl Context {
                 // join all the processing threads
                 ExitCode::from(0).exit_process()
             }
-            Request::Resize { size, window_index } => {
+            Request::Resize { size, window_id } => {
                 if size.x > 0 && size.y > 0 {
                     let size = glam::UVec2::from_array([size.x, size.y]);
-                    let _ = self.resize_window(window_index, size);
+                    let _ = self.resize_window(window_id.into(), size);
                 }
             }
-            Request::Redraw { window_index } => {
-                self.render_window(window_index).unwrap();
+            Request::Redraw { window_id } => {
+                self.render_window(window_id.into()).unwrap();
             }
             Request::OpenWindow => {
                 log::info!("imvr: creating main window");
                 self.create_window(event_loop, "image").unwrap();
             }
-            Request::CloseWindow { window_index } => {
+            Request::CloseWindow { window_id } => {
                 log::error!("This is really unsafe as it doesn't update any of the idents and so they end up pointing");
                 log::error!("garbage and can be used for evil. Eh i will fix it later");
-                self.windows.remove(window_index);
+                let idx = self
+                    .windows
+                    .iter()
+                    .position(|win| win.id() == window_id.into())
+                    .unwrap_or(0);
+                self.windows.remove(idx);
             }
         }
     }
@@ -168,7 +172,6 @@ impl Context {
 
         let index = self.windows.len();
 
-        self.identity_map.lock().unwrap().insert(window.id(), index);
         self.windows.push(window);
 
         self.gpu.set(gpu).unwrap();
@@ -177,8 +180,16 @@ impl Context {
     }
 
     /// Resize a window.
-    pub fn resize_window(&mut self, index: usize, new_size: glam::UVec2) -> anyhow::Result<()> {
-        let window = self.windows.get_mut(index).unwrap();
+    pub fn resize_window(
+        &mut self,
+        window_id: WindowId,
+        new_size: glam::UVec2,
+    ) -> anyhow::Result<()> {
+        let window = self
+            .windows
+            .iter_mut()
+            .find(|win| win.id() == window_id)
+            .unwrap();
 
         configure_surface(
             new_size,
@@ -193,8 +204,12 @@ impl Context {
     }
 
     /// Render the contents of a window.
-    pub fn render_window(&mut self, index: usize) -> anyhow::Result<()> {
-        let window = self.windows.get_mut(index).unwrap();
+    pub fn render_window(&mut self, window_id: WindowId) -> anyhow::Result<()> {
+        let window = self
+            .windows
+            .iter_mut()
+            .find(|win| win.id() == window_id)
+            .unwrap();
 
         let image = match &window.image {
             Some(x) => x,

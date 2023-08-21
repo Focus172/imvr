@@ -7,8 +7,7 @@ loc:
 build:
     cargo build --release
 
-publish: build
-    cargo clippy --forbid all
-    cargo test
-
-# vim: set ft=make :
+publish: build 
+    cargo fmt
+    cargo clippy -q -- -D warnings 
+    cargo test -q
