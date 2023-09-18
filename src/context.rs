@@ -98,11 +98,12 @@ impl Context {
                 window.uniforms.mark_dirty(true);
                 window.window.request_redraw();
             }
-            Request::Exit => {
+            Request::Exit { code } => {
                 // join all the processing threads
-                ExitCode::from(0).exit_process()
+                ExitCode::from(code.unwrap_or(0)).exit_process()
             }
             Request::Resize { size, window_id } => {
+                log::trace!("imvr: window resized: ({},{})", size.x, size.y);
                 if size.x > 0 && size.y > 0 {
                     let size = glam::UVec2::from_array([size.x, size.y]);
                     let _ = self.resize_window(window_id.into(), size);
@@ -111,21 +112,25 @@ impl Context {
             Request::Redraw { window_id } => {
                 self.render_window(window_id.into()).unwrap();
             }
-            Request::OpenWindow => {
-                log::info!("imvr: creating main window");
-                self.create_window(event_loop, "image").unwrap();
+            Request::OpenWindow { res } => {
+                log::debug!("imvr: creating window");
+                let id = self.create_window(event_loop, "image").unwrap();
+                res.send(id).unwrap();
+                log::info!("imvr: created window {}", id);
             }
             Request::CloseWindow { window_id } => {
-                log::error!("This is really unsafe as it doesn't update any of the idents and so they end up pointing");
-                log::error!("garbage and can be used for evil. Eh i will fix it later");
-                let idx = self
-                    .windows
-                    .iter()
-                    .position(|win| win.id() == window_id.into())
-                    .unwrap_or(0);
+                log::debug!("imvr: closing window {}", window_id);
+                let idx = self.index_from_id(window_id).unwrap_or(0);
                 self.windows.remove(idx);
+                log::info!("imvr: window {} closed", window_id);
             }
         }
+    }
+
+    fn index_from_id(&self, window_id: u64) -> Option<usize> {
+        self.windows
+            .iter()
+            .position(|win| win.id() == window_id.into())
     }
 
     /// Create a window.
@@ -133,7 +138,7 @@ impl Context {
         &mut self,
         event_loop: &EventLoopWindowTarget<()>,
         title: impl Into<String>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<u64> {
         let window = winit::window::WindowBuilder::new()
             .with_title(title)
             .with_visible(true)
@@ -170,13 +175,13 @@ impl Context {
             user_transform: Affine2::IDENTITY,
         };
 
-        let index = self.windows.len();
+        let id = window.id();
 
         self.windows.push(window);
 
         self.gpu.set(gpu).unwrap();
 
-        Ok(())
+        Ok(id.into())
     }
 
     /// Resize a window.

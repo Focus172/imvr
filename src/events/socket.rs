@@ -11,12 +11,12 @@ use crate::events::Request;
 pub struct SocketEventHandler {
     pub commands: Receiver<String>,
     socket_tx: UnixStream,
-    socket_rx: UnixListener,
+    // socket_rx: UnixListener,
 }
 
 impl SocketEventHandler {
     pub fn new() -> Self {
-        let listener = UnixListener::bind("/tmp/imvr.sock").unwrap();
+        // let listener = UnixListener::bind("/tmp/imvr.sock").unwrap();
         let mut stream = UnixStream::connect("/tmp/imvr.sock").unwrap();
 
         let (tx, rx) = std::sync::mpsc::channel();
@@ -43,12 +43,13 @@ impl SocketEventHandler {
         Self {
             commands: rx,
             socket_tx: stream,
-            socket_rx: listener,
+            // socket_rx: listener,
         }
     }
+}
 
-    fn close() -> ! {
-        todo!()
+impl Drop for SocketEventHandler {
+    fn drop(&mut self) {
     }
 }
 

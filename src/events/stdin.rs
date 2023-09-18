@@ -3,11 +3,13 @@
 
 use crate::prelude::*;
 
+#[derive(Default)]
 struct TerminalState {
     in_raw_mode: bool,
     locked: bool,
 }
 
+#[derive(Default)]
 pub struct StdinEventHandler {
     term: TerminalState,
     // reader: JoinHandle<()>,
@@ -17,7 +19,7 @@ pub struct StdinEventHandler {
 impl StdinEventHandler {
     pub fn new() -> Self {
         // let han = std::thread::spawn({});
-        todo!();
+        Self::default()
     }
 
     pub fn next(&mut self) -> Option<Request> {
@@ -25,6 +27,13 @@ impl StdinEventHandler {
     }
 
     pub fn exit(&mut self) {
+        if self.term.locked {
+            // unlock the terminal
+        }
+        if self.term.in_raw_mode {
+            // exit raw mode
+        }
+
         println!("Exiting!")
     }
 }

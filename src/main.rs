@@ -10,11 +10,10 @@ mod window;
 
 // mod mouse;
 
-use events::EventHandler;
-
+use crate::image_info::{ImageInfo, ImageView};
 use crate::prelude::*;
 
-use crate::image_info::{ImageInfo, ImageView};
+use crate::events::EventHandler;
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
@@ -32,14 +31,12 @@ fn main() -> anyhow::Result<()> {
 
         handlrs.add_window_event(event);
 
-        handlrs.yeild();
-
         while let Some(req) = handlrs.next() {
             context.handle_request(req, event_loop);
         }
 
         if context.windows.is_empty() {
-            handlrs.make_request(Request::Exit);
+            handlrs.make_request(Request::Exit { code: Some(0) });
         }
     });
 }
