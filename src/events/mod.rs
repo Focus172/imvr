@@ -1,20 +1,22 @@
 mod args;
-mod socket;
-mod stdin;
-mod window;
+// mod socket;
+// mod stdin;
 
 use args::ArgEventHandler;
-use socket::SocketEventHandler;
-use stdin::StdinEventHandler;
-use window::WindowEventHandler;
+use fallible_iter_ext::prelude::FallibleIteratorExt;
+use futures::{executor::block_on, Stream};
+// use socket::SocketEventHandler;
+// use stdin::StdinEventHandler;
+use tokio::sync::{mpsc, oneshot};
 
 // use crate::prelude::*;
 
 use serde::{Deserialize, Serialize};
-use std::{collections::VecDeque, path::PathBuf};
-use winit::event::Event as WEvent;
+use std::{path::PathBuf, time::Duration};
 
-#[derive(Serialize, Deserialize)]
+use crate::util::key::Key;
+
+#[derive(Serialize, Deserialize, Debug)]
 pub enum Request {
     Multiple(Vec<Request>),
     ShowImage {
@@ -28,9 +30,7 @@ pub enum Request {
     CloseWindow {
         window_id: u64,
     },
-    Exit {
-        code: Option<u8>,
-    },
+    Exit,
     Resize {
         size: glam::UVec2,
         window_id: u64,
@@ -38,89 +38,128 @@ pub enum Request {
     Redraw {
         window_id: u64,
     },
+    Tick
+}
+
+impl Request {
+    pub fn redraw(window_id: winit::window::WindowId) -> Self {
+        Self::Redraw {
+            window_id: window_id.into(),
+        }
+    }
+
+    pub fn resize(
+        physical_size: winit::dpi::PhysicalSize<u32>,
+        window_id: winit::window::WindowId,
+    ) -> Self {
+        Self::Resize {
+            size: (physical_size.width, physical_size.height).into(),
+            window_id: window_id.into(),
+        }
+    }
+
+    pub fn close(window_id: winit::window::WindowId) -> Self {
+        Self::CloseWindow {
+            window_id: window_id.into(),
+        }
+    }
 }
 
 pub struct EventHandler {
-    args_event_handler: ArgEventHandler,
-    socket_event_handler: SocketEventHandler,
-    stdin_event_handler: StdinEventHandler,
-    window_event_handler: WindowEventHandler,
-
-    queued_reqs: VecDeque<Request>,
+    handles: Vec<tokio::task::JoinHandle<()>>,
+    reqs: mpsc::Receiver<Request>,
 }
 
 impl EventHandler {
-    pub fn new() -> Self {
-        let args_event_handler = ArgEventHandler::new();
-        let socket_event_handler = SocketEventHandler::new();
-        let stdin_event_handler = StdinEventHandler::new();
-        let window_event_handler = WindowEventHandler::new();
+    pub async fn new() -> Self {
+        let mut handles = vec![];
 
-        Self {
-            args_event_handler,
-            socket_event_handler,
-            stdin_event_handler,
-            window_event_handler,
-            queued_reqs: VecDeque::new(),
+        let (tx, reqs) = mpsc::channel(4);
+
+        {
+            // --- Args ---------
+            let tx = tx.clone();
+            let h = tokio::spawn(async move {
+                let args = ArgEventHandler::new();
+                for req in args.fuse_err() {
+                    tx.send(req).await.unwrap();
+                }
+            });
+            handles.push(h);
+        }
+
+        {
+            // --- Keep Alive ---------
+            let tx = tx.clone();
+            let h = tokio::spawn(async move {
+                loop {
+                    let timeout = tokio::time::sleep(Duration::from_secs(1));
+                    tokio::select! {
+                        _ = tx.closed() => {
+                            return;
+                        }
+                        _ = timeout => {
+                            tx.send(Request::Tick).await.unwrap();
+                        }
+
+                    }
+                }
+            });
+            handles.push(h);
+        }
+
+        EventHandler { handles, reqs }
+    }
+
+    pub async fn close(&mut self) {
+        self.reqs.close();
+        while let Some(h) = self.handles.pop() {
+            h.await.unwrap();
         }
     }
+}
 
-    pub fn add_window_event(&mut self, event: WEvent<()>) {
-        self.window_event_handler.add(event)
+impl Drop for EventHandler {
+    fn drop(&mut self) {
+        block_on(async { self.close().await })
     }
+}
 
-    pub fn make_request(&mut self, req: Request) {
-        self.queued_reqs.push_back(req);
+impl Stream for EventHandler {
+    type Item = Request;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.reqs.poll_recv(cx)
     }
+}
 
-
-    // pub fn disable_source(&mut self, source_type: Source) {
-    //     if source_type == Source::Manual {
-    //         return;
+impl EventHandler {
+    // pub fn new() -> Self {
+    //     let args_event_handler = ArgEventHandler::new();
+    //     // let socket_event_handler = SocketEventHandler::new();
+    //     let stdin_event_handler = StdinEventHandler::new();
+    //     let window_event_handler = WindowEventHandler::new();
+    //
+    //     Self {
+    //         args_event_handler,
+    //         // socket_event_handler,
+    //         stdin_event_handler,
+    //         window_event_handler,
+    //         queued_reqs: VecDeque::new(),
     //     }
-    //
-    //     let new_queue = self
-    //         .queued_reqs
-    //         .iter()
-    //         .filter(|(_e, source)| source != &source_type)
-    //         .cloned()
-    //         .collect();
-    //
-    //     match source_type {
-    //         Source::Arg => self.args_enabled = false,
-    //         Source::Socket => self.socket_enabled = false,
-    //         Source::Stdin => self.stdin_enabled = false,
-    //         Source::Window => self.window_enabled = false,
-    //         _ => unreachable!(),
-    //     }
-    //
-    //     self.queued_reqs = new_queue;
     // }
-    //
-    // pub fn enable_source(&mut self, source_type: Source) {
-    //     match source_type {
-    //         Source::Arg => self.args_enabled = true,
-    //         Source::Socket => self.socket_enabled = true,
-    //         Source::Stdin => self.stdin_enabled = true,
-    //         Source::Window => self.window_enabled = true,
-    //         _ => unreachable!(),
-    //     }
+
+    // pub fn add_window_event(&mut self, event: WEvent<()>) {
+    //     self.window_event_handler.add(event)
     // }
 
-    pub fn next(&mut self) -> Option<Request> {
-        self.yeild();
-        self.queued_reqs.pop_front()
-    }
-
-    fn yeild(&mut self) {
-        if let Some(e) = self.args_event_handler.next() {
-            self.queued_reqs.push_back(e);
-        }
-
-        if let Some(e) = self.window_event_handler.next() {
-            self.queued_reqs.push_back(e);
-        }
-    }
+    // pub fn next(&mut self) -> Option<Request> {
+    //     self.yeild();
+    //     self.queued_reqs.pop_front()
+    // }
 }
 
 // trait EventParser<E> {
@@ -131,3 +170,15 @@ impl EventHandler {
 //     /// Closes the event handler haulting any events
 //     fn close(&mut self) -> !;
 // }
+
+pub fn parse_key(key: Key) -> Result<Request, ()> {
+    match key {
+        Key::Char('q') => Ok(Request::Exit),
+        Key::Char('l') => todo!("Select Next Image"),
+        Key::Char(_) => todo!(),
+        Key::Ctrl('c') => Ok(Request::Exit),
+        Key::Ctrl(_) => todo!(),
+        Key::Alt(_) => todo!(),
+        Key::Nothing => todo!(),
+    }
+}

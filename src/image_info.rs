@@ -1,3 +1,6 @@
+use crate::prelude::*;
+use image::ColorType;
+
 /// Information describing the binary data of an image.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct ImageInfo {
@@ -32,6 +35,24 @@ pub enum PixelFormat {
 
     /// Interlaced 8-bit RGBA data.
     Rgba8(Alpha),
+}
+
+impl From<ColorType> for PixelFormat {
+    fn from(value: ColorType) -> Self {
+        match value {
+            ColorType::L8 => Self::Mono8,
+            ColorType::La8 => Self::MonoAlpha8(Alpha::Premultiplied),
+            ColorType::Rgb8 => Self::Rgb8,
+            ColorType::Rgba8 => Self::Bgra8(Alpha::Premultiplied),
+            ColorType::L16 => unimplemented!(),
+            ColorType::La16 => unimplemented!(),
+            ColorType::Rgb16 => unimplemented!(),
+            ColorType::Rgba16 => unimplemented!(),
+            ColorType::Rgb32F => unimplemented!(),
+            ColorType::Rgba32F => unimplemented!(),
+            _ => unimplemented!(),
+        }
+    }
 }
 
 /// Possible alpha representations.
@@ -90,7 +111,7 @@ impl PixelFormat {
 /// Trait for borrowing image data from a struct.
 pub trait AsImageView {
     /// Get an image view for the object.
-    fn as_image_view(&self) -> anyhow::Result<ImageView>;
+    fn as_image_view(&self) -> Result<ImageView>;
 }
 
 /// Borrowed view of image data,
@@ -118,7 +139,7 @@ impl<'a> ImageView<'a> {
 }
 
 impl<'a> AsImageView for ImageView<'a> {
-    fn as_image_view(&self) -> anyhow::Result<ImageView> {
+    fn as_image_view(&self) -> Result<ImageView> {
         Ok(*self)
     }
 }

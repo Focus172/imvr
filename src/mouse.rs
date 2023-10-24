@@ -14,12 +14,10 @@ pub struct MouseCache {
 }
 
 impl MouseCache {
-    #[allow(unused)]
     pub fn get_position(&self, window_id: WindowId, device_id: DeviceId) -> Option<glam::Vec2> {
         self.mouse_position.get(&(window_id, device_id)).copied()
     }
 
-    #[allow(unused)]
     pub fn get_prev_position(
         &self,
         window_id: WindowId,
@@ -30,7 +28,6 @@ impl MouseCache {
             .copied()
     }
 
-    #[allow(unused)]
     pub fn get_buttons(&self, device_id: DeviceId) -> Option<&MouseButtonState> {
         self.mouse_buttons.get(&device_id)
     }

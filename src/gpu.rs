@@ -1,7 +1,7 @@
 use crate::image_info::{Alpha, PixelFormat};
+use crate::prelude::*;
 use crate::ImageInfo;
 use crate::ImageView;
-use anyhow::anyhow;
 use core::num::NonZeroU64;
 
 use super::window::WindowUniforms;
@@ -29,7 +29,7 @@ impl GpuContext {
         instance: &wgpu::Instance,
         swap_chain_format: wgpu::TextureFormat,
         surface: &wgpu::Surface,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self> {
         let (device, queue) = futures::executor::block_on(get_device(instance, surface))?;
         device.on_uncaptured_error(Box::new(|error| {
             panic!("Unhandled WGPU error: {}", error);
@@ -71,7 +71,7 @@ impl GpuContext {
 async fn get_device(
     instance: &wgpu::Instance,
     surface: &wgpu::Surface,
-) -> anyhow::Result<(wgpu::Device, wgpu::Queue)> {
+) -> Result<(wgpu::Device, wgpu::Queue)> {
     // Find a suitable display adapter.
     let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::LowPower,
@@ -79,7 +79,7 @@ async fn get_device(
         force_fallback_adapter: false,
     });
 
-    let adapter = adapter.await.ok_or(anyhow!("no adapter found"))?;
+    let adapter = adapter.await.ok_or(eyre!("no adapter found"))?;
 
     // Create the logical device and command queue
     let device = adapter.request_device(

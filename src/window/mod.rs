@@ -1,3 +1,5 @@
+pub mod event;
+
 use crate::gpu::{GpuImage, ToStd140, UniformsBuffer};
 use glam::Vec3;
 use glam::{Affine2, Vec2};
