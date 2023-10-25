@@ -2,9 +2,8 @@ use crate::image_info::{Alpha, PixelFormat};
 use crate::prelude::*;
 use crate::ImageInfo;
 use crate::ImageView;
+use crate::window::uniforms::WindowUniforms;
 use core::num::NonZeroU64;
-
-use super::window::WindowUniforms;
 
 #[derive(Debug)]
 pub struct GpuContext {
@@ -210,7 +209,7 @@ pub struct GpuImage {
 
 /// The uniforms associated with a [`GpuImage`].
 #[derive(Debug, Copy, Clone)]
-#[allow(unused)] // All fields are used by the GPU.
+#[allow(dead_code)] // All fields are used by the GPU.
 pub struct GpuImageUniforms {
     format: u32,
     width: u32,
@@ -402,11 +401,6 @@ impl<T: ToStd140> UniformsBuffer<T> {
     }
 }
 
-/// Reinterpret an object as bytes.
-unsafe fn as_bytes<T>(value: &T) -> &[u8] {
-    std::slice::from_raw_parts(value as *const T as *const u8, std::mem::size_of_val(value))
-}
-
 /// Create a [`wgpu::Buffer`] with an arbitrary object as contents.
 fn create_buffer_with_value<T: Copy>(
     device: &wgpu::Device,
@@ -414,13 +408,14 @@ fn create_buffer_with_value<T: Copy>(
     value: &T,
     usage: wgpu::BufferUsages,
 ) -> wgpu::Buffer {
+    let contents = unsafe {
+        std::slice::from_raw_parts(value as *const T as *const u8, std::mem::size_of_val(value))
+    };
+
     use wgpu::util::DeviceExt;
-    unsafe {
-        let contents = as_bytes(value);
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label,
-            contents,
-            usage,
-        })
-    }
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label,
+        contents,
+        usage,
+    })
 }

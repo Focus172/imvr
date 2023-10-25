@@ -4,9 +4,6 @@ default:
 loc:
     find src/ -name "*.rs" | xargs cat | wc -l
 
-build:
-    cargo build --release
-
 publish:
     cargo fmt
     cargo clippy -q -- -D warnings 
@@ -14,3 +11,7 @@ publish:
 
 debug:
     RUST_BACKTRACE=1 RUST_LOG=info cargo run -- ~/pix/art/war.jpg
+
+install:
+    cargo build --release
+    cp ./target/release/imvr ~/.local/bin/

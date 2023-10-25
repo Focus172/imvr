@@ -1,9 +1,12 @@
 pub mod event;
+pub mod uniforms;
 
-use crate::gpu::{GpuImage, ToStd140, UniformsBuffer};
-use glam::Vec3;
+use self::uniforms::WindowUniforms;
+
+use crate::gpu::{GpuContext, GpuImage, UniformsBuffer};
 use glam::{Affine2, Vec2};
-use wgpu::Color;
+use wgpu::{Color, Instance};
+use winit::event_loop::EventLoopWindowTarget;
 use winit::window::WindowId;
 
 /// Window capable of displaying images using wgpu.
@@ -34,7 +37,61 @@ pub struct Window {
     // pub event_handlers: Vec<Box<DynWindowEventHandler>>,
 }
 
+use crate::prelude::*;
+
+
 impl Window {
+    /// Create a new window.
+    pub fn new(
+        event_loop: &EventLoopWindowTarget<()>,
+        title: impl Into<String>,
+        gpu: Option<GpuContext>,
+        instance: &Instance,
+    ) -> Result<(Self, GpuContext)> {
+        let window = winit::window::WindowBuilder::new()
+            .with_title(title)
+            .with_visible(true)
+            .with_resizable(true)
+            // .with_decorations(true)
+            // .with_window_icon(Some(Icon::from_rgba(rgba, width, height)))
+            // .with_transparent(true)
+            // .with_enabled_buttons(WindowButtons::empty())
+            .build(event_loop)?;
+
+        // window.request_redraw();
+        // window.pre_present_notify();
+
+        let surface = unsafe { instance.create_surface(&window) }?;
+
+        let gpu = match gpu {
+            Some(x) => x,
+            None => GpuContext::new(instance, SWAP_CHAIN_FORMAT, &surface)?,
+        };
+
+        let size = glam::UVec2::new(window.inner_size().width, window.inner_size().height);
+
+        configure_surface(size, &surface, &gpu.device);
+
+        let uniforms = UniformsBuffer::from_value(
+            &gpu.device,
+            &WindowUniforms::no_image(),
+            &gpu.window_bind_group_layout,
+        );
+
+        Ok((
+            Window {
+                window,
+                preserve_aspect_ratio: true,
+                background_color: wgpu::Color::default(),
+                surface,
+                uniforms,
+                image: None,
+                user_transform: Affine2::IDENTITY,
+            },
+            gpu,
+        ))
+    }
+
     /// Get the window ID.
     pub fn id(&self) -> WindowId {
         self.window.id()
@@ -64,193 +121,19 @@ impl Window {
     }
 }
 
-/// Options for creating a new window.
-#[derive(Debug, Clone)]
-pub struct WindowOptions {
-    /// Preserve the aspect ratio of the image when scaling.
-    pub preserve_aspect_ratio: bool,
+const SWAP_CHAIN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 
-    /// The background color for the window.
-    ///
-    /// This is used to color areas without image data if `preserve_aspect_ratio` is true.
-    pub background_color: Color,
-
-    /// Create the window hidden.
-    ///
-    /// The window can manually be made visible at a later time.
-    pub start_hidden: bool,
-
-    /// The initial size of the window in pixel.
-    pub size: Option<[u32; 2]>,
-
-    /// If true allow the window to be resized.
-    pub resizable: bool,
-
-    /// Make the window borderless.
-    pub borderless: bool,
-
-    /// Make the window fullscreen.
-    pub fullscreen: bool,
+/// Create a swap chain for a surface.
+fn configure_surface(size: glam::UVec2, surface: &wgpu::Surface, device: &wgpu::Device) {
+    let config = wgpu::SurfaceConfiguration {
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        format: SWAP_CHAIN_FORMAT,
+        width: size.x,
+        height: size.y,
+        present_mode: wgpu::PresentMode::AutoVsync,
+        alpha_mode: Default::default(),
+        view_formats: Default::default(),
+    };
+    surface.configure(device, &config);
 }
 
-impl Default for WindowOptions {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl WindowOptions {
-    /// Create new window options with default values.
-    pub fn new() -> Self {
-        Self {
-            preserve_aspect_ratio: true,
-            background_color: Color::BLACK,
-            start_hidden: false,
-            size: None,
-            resizable: true,
-            borderless: false,
-            fullscreen: false,
-        }
-    }
-}
-
-/// The window specific uniforms for the render pipeline.
-#[derive(Debug, Copy, Clone)]
-pub struct WindowUniforms {
-    /// The transformation applied to the image.
-    ///
-    /// With the identity transform, the image is stretched to the inner window size,
-    /// without preserving the aspect ratio.
-    pub transform: Affine2,
-
-    /// The size of the image in pixels.
-    pub image_size: Vec2,
-}
-
-impl WindowUniforms {
-    pub fn no_image() -> Self {
-        Self::stretch(Vec2::new(0.0, 0.0))
-    }
-
-    pub fn stretch(image_size: Vec2) -> Self {
-        Self {
-            transform: Affine2::IDENTITY,
-            image_size,
-        }
-    }
-
-    pub fn fit(window_size: Vec2, image_size: Vec2) -> Self {
-        let ratios = image_size / window_size;
-
-        let w;
-        let h;
-        if ratios.x >= ratios.y {
-            w = 1.0;
-            h = ratios.y / ratios.x;
-        } else {
-            w = ratios.x / ratios.y;
-            h = 1.0;
-        }
-
-        let transform = Affine2::from_scale_angle_translation(
-            Vec2::new(w, h),
-            0.0,
-            0.5 * Vec2::new(1.0 - w, 1.0 - h),
-        );
-        Self {
-            transform,
-            image_size,
-        }
-    }
-
-    /// Pre-apply a transformation.
-    pub fn pre_apply_transform(mut self, transform: Affine2) -> Self {
-        self.transform = transform * self.transform;
-        self
-    }
-}
-
-#[repr(C, align(8))]
-#[derive(Debug, Copy, Clone)]
-struct Vec2A8 {
-    pub x: f32,
-    pub y: f32,
-}
-
-#[repr(C, align(16))]
-#[derive(Debug, Copy, Clone)]
-struct Vec3A16 {
-    pub x: f32,
-    pub y: f32,
-    pub z: f32,
-}
-
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-struct Mat3x3 {
-    pub cols: [Vec3A16; 3],
-}
-
-impl Vec2A8 {
-    pub const fn new(x: f32, y: f32) -> Self {
-        Self { x, y }
-    }
-}
-
-impl Vec3A16 {
-    pub const fn new(x: f32, y: f32, z: f32) -> Self {
-        Self { x, y, z }
-    }
-}
-
-impl Mat3x3 {
-    pub const fn new(col0: Vec3A16, col1: Vec3A16, col2: Vec3A16) -> Self {
-        Self {
-            cols: [col0, col1, col2],
-        }
-    }
-}
-
-impl From<Vec2> for Vec2A8 {
-    fn from(other: Vec2) -> Self {
-        Self::new(other.x, other.y)
-    }
-}
-
-impl From<Vec3> for Vec3A16 {
-    fn from(other: Vec3) -> Self {
-        Self::new(other.x, other.y, other.z)
-    }
-}
-
-impl From<Affine2> for Mat3x3 {
-    fn from(other: Affine2) -> Self {
-        let x_axis = other.matrix2.x_axis;
-        let y_axis = other.matrix2.y_axis;
-        let z_axis = other.translation;
-        Self::new(
-            Vec3A16::new(x_axis.x, x_axis.y, 0.0),
-            Vec3A16::new(y_axis.x, y_axis.y, 0.0),
-            Vec3A16::new(z_axis.x, z_axis.y, 1.0),
-        )
-    }
-}
-
-/// Window specific unfiforms, layout compatible with glsl std140.
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct WindowUniformsStd140 {
-    image_size: Vec2A8,
-    transform: Mat3x3,
-}
-
-unsafe impl ToStd140 for WindowUniforms {
-    type Output = WindowUniformsStd140;
-
-    fn to_std140(&self) -> Self::Output {
-        Self::Output {
-            image_size: self.image_size.into(),
-            transform: self.transform.into(),
-        }
-    }
-}
