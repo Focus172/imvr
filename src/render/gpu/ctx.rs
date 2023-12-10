@@ -1,11 +1,14 @@
-use crate::image_info::{Alpha, PixelFormat};
 use crate::prelude::*;
-use crate::ImageInfo;
-use crate::ImageView;
-use crate::window::uniforms::WindowUniforms;
+
+use crate::render::uniforms::{Std140, WindowUniforms};
+// use crate::ImageInfo;
+// use crate::ImageView;
 use core::num::NonZeroU64;
 
+use super::image::GpuImageUniforms;
+
 #[derive(Debug)]
+/// A (per window?) context to render the surface on the gpu
 pub struct GpuContext {
     /// The wgpu device to use.
     pub device: wgpu::Device,
@@ -28,7 +31,7 @@ impl GpuContext {
         instance: &wgpu::Instance,
         swap_chain_format: wgpu::TextureFormat,
         surface: &wgpu::Surface,
-    ) -> Result<Self> {
+    ) -> Result<Self, GpuContextError> {
         let (device, queue) = futures::executor::block_on(get_device(instance, surface))?;
         device.on_uncaptured_error(Box::new(|error| {
             panic!("Unhandled WGPU error: {}", error);
@@ -38,9 +41,9 @@ impl GpuContext {
         let image_bind_group_layout = create_image_bind_group_layout(&device);
 
         let vertex_shader =
-            device.create_shader_module(wgpu::include_spirv!("../shaders/shader.vert.spv"));
+            device.create_shader_module(wgpu::include_spirv!("../../../shaders/shader.vert.spv"));
         let fragment_shader_unorm8 =
-            device.create_shader_module(wgpu::include_spirv!("../shaders/unorm8.frag.spv"));
+            device.create_shader_module(wgpu::include_spirv!("../../../shaders/unorm8.frag.spv"));
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("show-image-pipeline-layout"),
@@ -70,27 +73,34 @@ impl GpuContext {
 async fn get_device(
     instance: &wgpu::Instance,
     surface: &wgpu::Surface,
-) -> Result<(wgpu::Device, wgpu::Queue)> {
+) -> Result<(wgpu::Device, wgpu::Queue), GpuContextError> {
     // Find a suitable display adapter.
-    let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::LowPower,
-        compatible_surface: Some(surface),
-        force_fallback_adapter: false,
-    });
-
-    let adapter = adapter.await.ok_or(eyre!("no adapter found"))?;
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: Some(surface),
+            force_fallback_adapter: false,
+        })
+        .await
+        .ok_or_else(|| {
+            Report::new(GpuContextError).attach_printable("No suitable gpu adapter found")
+        })?;
 
     // Create the logical device and command queue
-    let device = adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            label: Some("show-image"),
-            limits: wgpu::Limits::default(),
-            features: wgpu::Features::default(),
-        },
-        None,
-    );
-
-    let (device, queue) = device.await?;
+    let (device, queue) = adapter
+        .request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("show-image"),
+                limits: wgpu::Limits::default(),
+                features: wgpu::Features::default(),
+            },
+            None,
+        )
+        .await
+        .attach_printable_lazy(|| {
+            format!("Failed to get a device that could show the image for adapter {adapter:?}.")
+        })
+        .change_context(GpuContextError)?;
 
     Ok((device, queue))
 }
@@ -106,7 +116,7 @@ fn create_window_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayo
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
                 has_dynamic_offset: false,
-                min_binding_size: Some(NonZeroU64::new(WindowUniforms::STD140_SIZE).unwrap()),
+                min_binding_size: const { Some(NonZeroU64::new(WindowUniforms::SIZE).unwrap()) },
             },
         }],
     })
@@ -198,147 +208,44 @@ fn create_render_pipeline(
     })
 }
 
-/// A GPU image buffer ready to be used with the rendering pipeline.
-pub struct GpuImage {
-    _name: String,
-    info: ImageInfo,
-    bind_group: wgpu::BindGroup,
-    _uniforms: wgpu::Buffer,
-    _data: wgpu::Buffer,
-}
-
-/// The uniforms associated with a [`GpuImage`].
-#[derive(Debug, Copy, Clone)]
-#[allow(dead_code)] // All fields are used by the GPU.
-pub struct GpuImageUniforms {
-    format: u32,
-    width: u32,
-    height: u32,
-    stride_x: u32,
-    stride_y: u32,
-}
-
-impl GpuImage {
-    /// Create a [`GpuImage`] from an image buffer.
-    pub fn from_data(
-        name: String,
-        device: &wgpu::Device,
-        bind_group_layout: &wgpu::BindGroupLayout,
-        image: &ImageView,
-    ) -> Self {
-        let info = image.info();
-
-        let format = match info.pixel_format {
-            PixelFormat::Mono8 => 0,
-            PixelFormat::MonoAlpha8(Alpha::Unpremultiplied) => 1,
-            PixelFormat::MonoAlpha8(Alpha::Premultiplied) => 2,
-            PixelFormat::Bgr8 => 3,
-            PixelFormat::Bgra8(Alpha::Unpremultiplied) => 4,
-            PixelFormat::Bgra8(Alpha::Premultiplied) => 5,
-            PixelFormat::Rgb8 => 6,
-            PixelFormat::Rgba8(Alpha::Unpremultiplied) => 7,
-            PixelFormat::Rgba8(Alpha::Premultiplied) => 8,
-        };
-
-        let uniforms = GpuImageUniforms {
-            format,
-            width: info.size.x,
-            height: info.size.y,
-            stride_x: info.stride.x,
-            stride_y: info.stride.y,
-        };
-
-        let uniforms = create_buffer_with_value(
-            device,
-            Some(&format!("{}_uniforms_buffer", name)),
-            &uniforms,
-            wgpu::BufferUsages::UNIFORM,
-        );
-
-        use wgpu::util::DeviceExt;
-        let data = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(&format!("{}_image_buffer", name)),
-            contents: image.data(),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(&format!("{}_bind_group", name)),
-            layout: bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &uniforms,
-                        offset: 0,
-                        size: None, // Use entire buffer.
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &data,
-                        offset: 0,
-                        size: None, // Use entire buffer.
-                    }),
-                },
-            ],
-        });
-
-        Self {
-            _name: name,
-            info,
-            bind_group,
-            _uniforms: uniforms,
-            _data: data,
-        }
-    }
-
-    /// Get the image info.
-    pub fn info(&self) -> &ImageInfo {
-        &self.info
-    }
-
-    /// Get the bind group that should be used to render the image with the rendering pipeline.
-    pub fn bind_group(&self) -> &wgpu::BindGroup {
-        &self.bind_group
-    }
-}
-
-/// Trait for data in Std140 compatible layout.
-///
-/// # Safety
-/// Implementing this trait indicates that the data is in Std140 compatible layout.
-/// If that is not true, the GPU may perform illegal memory access.
-pub unsafe trait ToStd140 {
-    type Output: Copy;
-
-    const STD140_SIZE: u64 = std::mem::size_of::<Self::Output>() as u64;
-
-    fn to_std140(&self) -> Self::Output;
-}
+// Trait for data in Std140 compatible layout.
+//
+// # Safety
+// Implementing this trait indicates that the data is in Std140 compatible layout.
+// If that is not true, the GPU may perform illegal memory access.
+// pub unsafe trait ToStd140 {
+//     type Output: Copy;
+//
+//     const STD140_SIZE: u64 = std::mem::size_of::<Self::Output>() as u64;
+//
+//     fn to_std140(&self) -> Self::Output;
+// }
 
 /// A buffer holding uniform data and matching bind group.
 ///
 /// The buffer can be marked as dirty to indicate the contents need to be updated.
 /// The contents can be updated with [`Self::update_from`],
 /// which will also clear the dirty flag.
-pub struct UniformsBuffer<T> {
+#[derive(Debug)]
+pub struct UniformsBuffer<T>
+where
+    T: Std140,
+{
     buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     dirty: bool,
-    _phantom: std::marker::PhantomData<fn(&T)>,
+    _data: std::marker::PhantomData<T>,
 }
 
-impl<T: ToStd140> UniformsBuffer<T> {
+impl<T: Std140> UniformsBuffer<T> {
     /// Create a new UniformsBuffer from the given value and bind group layout.
     ///
     /// The bind group layout must have exactly 1 binding for a buffer at index 0.
     pub fn from_value(device: &wgpu::Device, value: &T, layout: &wgpu::BindGroupLayout) -> Self {
-        let buffer = create_buffer_with_value(
+        let buffer = super::buffer::with_value(
             device,
             None,
-            &value.to_std140(),
+            value,
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -358,7 +265,7 @@ impl<T: ToStd140> UniformsBuffer<T> {
             buffer,
             bind_group,
             dirty: false,
-            _phantom: std::marker::PhantomData,
+            _data: std::marker::PhantomData,
         }
     }
 
@@ -384,38 +291,19 @@ impl<T: ToStd140> UniformsBuffer<T> {
         encoder: &mut wgpu::CommandEncoder,
         value: &T,
     ) {
-        let buffer = create_buffer_with_value(
-            device,
-            None,
-            &value.to_std140(),
-            wgpu::BufferUsages::COPY_SRC,
-        );
-        encoder.copy_buffer_to_buffer(
-            &buffer,
-            0,
-            &self.buffer,
-            0,
-            T::STD140_SIZE as wgpu::BufferAddress,
-        );
+        let buffer = super::buffer::with_value(device, None, value, wgpu::BufferUsages::COPY_SRC);
+        encoder.copy_buffer_to_buffer(&buffer, 0, &self.buffer, 0, T::SIZE as wgpu::BufferAddress);
         self.mark_dirty(false);
     }
 }
 
-/// Create a [`wgpu::Buffer`] with an arbitrary object as contents.
-fn create_buffer_with_value<T: Copy>(
-    device: &wgpu::Device,
-    label: Option<&str>,
-    value: &T,
-    usage: wgpu::BufferUsages,
-) -> wgpu::Buffer {
-    let contents = unsafe {
-        std::slice::from_raw_parts(value as *const T as *const u8, std::mem::size_of_val(value))
-    };
+#[derive(Debug)]
+pub struct GpuContextError;
 
-    use wgpu::util::DeviceExt;
-    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label,
-        contents,
-        usage,
-    })
+impl fmt::Display for GpuContextError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Gpu context encountered and error.")
+    }
 }
+
+impl Context for GpuContextError {}

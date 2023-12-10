@@ -1,7 +1,7 @@
-// Module for reading from stdin and adding requests to the context
-//
+//! Module for reading from stdin and adding requests to the context
+//!
 
-use crossterm::event::Event;
+#![allow(unused)]
 
 use crate::prelude::*;
 
@@ -28,7 +28,6 @@ impl TerminalState {
             log::warn!("Attempt to enter raw mode when already in it");
         }
     }
-
 }
 #[derive(Default)]
 pub struct StdinEventHandler {
@@ -50,25 +49,6 @@ impl StdinEventHandler {
         println!("Exiting!")
     }
 }
-
-// impl Iterator for StdinEventHandler {
-//     type Item = Request;
-//
-//     fn next(&mut self) -> Option<Self::Item> {
-//         let Ok(e) = crossterm::event::read() else {
-//             return None;
-//         };
-//
-//         match e {
-//             Event::FocusGained => None,
-//             Event::FocusLost => None,
-//             Event::Key(k) => super::parse_key(k.into()),
-//             Event::Mouse(_) => unreachable!(),
-//             Event::Paste(_) => unreachable!(),
-//             Event::Resize(_, _) => unimplemented!(),
-//         }
-//     }
-// }
 
 impl Drop for StdinEventHandler {
     fn drop(&mut self) {

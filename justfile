@@ -10,7 +10,7 @@ publish:
     cargo test -q
 
 debug:
-    RUST_BACKTRACE=1 RUST_LOG=info cargo run -- ~/pix/art/war.jpg
+    RUST_BACKTRACE=1 RUST_LOG=error,imvr=trace cargo run -- ~/pix/art/war.jpg
 
 install:
     cargo build --release

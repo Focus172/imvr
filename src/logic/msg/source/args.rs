@@ -5,15 +5,14 @@
 // the coresponding image is opened on it. if none of the channels yeild
 // immediatly then just return none
 
-use std::{collections::VecDeque, env, path::PathBuf};
-
+use std::{collections::VecDeque, env, path::PathBuf, time::Duration};
 
 use tokio::sync::oneshot;
 
-use crate::prelude::*;
+use crate::{logic::msg::Msg, prelude::*};
 
 pub struct ArgEventHandler {
-    window_opens: VecDeque<Request>,
+    window_opens: Vec<Msg>,
     window_draws: VecDeque<(oneshot::Receiver<u64>, PathBuf)>,
 }
 
@@ -23,11 +22,11 @@ impl ArgEventHandler {
     }
 
     pub(crate) fn new_from_list(args: impl Iterator<Item = String>) -> Self {
-        let mut window_opens = VecDeque::new();
+        let mut window_opens = Vec::new();
         let mut window_draws = VecDeque::new();
         for arg in args.skip(1) {
             let (tx, rx) = oneshot::channel();
-            window_opens.push_back(Request::OpenWindow { res: tx });
+            window_opens.push(Msg::open(tx));
             window_draws.push_back((rx, arg.into()));
         }
 
@@ -39,23 +38,29 @@ impl ArgEventHandler {
 }
 
 impl Iterator for ArgEventHandler {
-    type Item = Result<Request, ()>;
+    type Item = Msg;
 
-    fn next(&mut self) -> Option<Result<Request, ()>> {
-        let Some((rx, _)) = self.window_draws.front_mut() else {
-            return Some(Err(()));
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(open) = self.window_opens.pop() {
+            return Some(open);
+        }
+
+        let Some((mut rx, path)) = self.window_draws.pop_front() else {
+            return None;
         };
 
-        let Ok(window_id) = rx.try_recv() else {
-            // TODO: this returning none can cause this event send to return None
-            // before when it is expected
-            return self.window_opens.pop_front().map(|r| Ok(r));
-        };
+        log::info!("trying to get id of opened window");
 
-        // this is a safe unwrap beacuse front returned some above
-        let (_, path) = self.window_draws.pop_front().unwrap();
-
-        Some(Ok(Request::ShowImage { path, window_id }))
+        if let Ok(window) = rx.try_recv() {
+            let id = window.into();
+            Some(Msg::ShowImage { path, id })
+        } else {
+            self.window_draws.push_back((rx, path));
+            // std::thread::yield_now();
+            log::info!("Waiting beacuse nothing is ready yet");
+            std::thread::sleep(Duration::from_secs(1));
+            self.next()
+        }
     }
 }
 
@@ -81,4 +86,12 @@ mod test {
         // beacuse there is no main thread to respond it will always be None
         assert!(arg_handle.next().is_none())
     }
+}
+
+use clap::Parser;
+
+#[derive(Parser)]
+pub struct Args {
+    #[arg(last = true)]
+    pub files: Vec<PathBuf>,
 }

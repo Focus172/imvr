@@ -1,69 +1,78 @@
-use crate::events::Request;
-use crate::gpu::GpuImage;
-use crate::image_info::{ImageInfo, ImageView};
-use crate::{gpu::GpuContext, window::Window};
-use image::GenericImageView;
-use std::cell::OnceCell;
-use winit::event_loop::EventLoopWindowTarget;
-use winit::window::WindowId;
-
 use crate::prelude::*;
 
+use crate::logic::req::WindowRequest;
+use crate::render::gpu::image::GpuImage;
+use crate::render::gpu::image::{ImageInfo, ImageView};
+use crate::window::Window;
+use crate::ImvrEventLoopHandle;
+use ext::glam::UVec2;
+use image::GenericImageView;
+use winit::window::WindowId;
+
 /// The global context managing all windows and producing winit events
-pub struct Context {
+#[derive(Debug)]
+pub struct GlobalContext {
     /// The wgpu instance to create surfaces with.
     pub instance: wgpu::Instance,
 
     /// The windows.
     pub windows: Vec<Window>,
+    // pub gpu: OnceCell<GpuContext>,
+}
 
-    pub gpu: OnceCell<GpuContext>,
+impl Default for GlobalContext {
+    fn default() -> Self {
+        Self {
+            instance: wgpu::Instance::new(wgpu::InstanceDescriptor {
+                backends: wgpu::Backends::PRIMARY,
+                ..Default::default()
+            }),
+            windows: Default::default(),
+            // gpu: Default::default(),
+        }
+    }
 }
 
 const SWAP_CHAIN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 
-impl Context {
+impl GlobalContext {
     /// Creates a new global context returning the event loop for it
-    pub fn new() -> Result<Self> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
-            dx12_shader_compiler: Default::default(),
-        });
-
-        Ok(Self {
-            instance,
-            windows: Vec::new(),
-            gpu: OnceCell::new(),
-        })
+    pub fn new() -> Self {
+        GlobalContext::default()
     }
 
     pub fn handle_request(
         &mut self,
-        req: Request,
-        event_loop: &EventLoopWindowTarget<()>,
-    ) -> Result<()> {
+        req: WindowRequest,
+        event_loop: &ImvrEventLoopHandle,
+    ) -> Result<(), GlobalContextError> {
         match req {
-            Request::Multiple(reqs) => {
+            WindowRequest::Many(reqs) => {
                 for req in reqs {
                     self.handle_request(req, event_loop)?;
                 }
             }
-            Request::ShowImage { path, window_id } => {
-                if self.gpu.get().is_none() || self.windows.is_empty() {
-                    return Err(eyre!(
-                        "Don't try to set the image before you have a valid context"
-                    ));
-                }
-                let img = image::open(path).unwrap();
+            WindowRequest::ShowImage { image, id } => {
+                let window = self
+                    .windows
+                    .iter_mut()
+                    .find(|win| win.id() == id)
+                    .ok_or_else(|| {
+                        Report::new(GlobalContextError)
+                            .attach_printable(format!("No open window matches id: {:?}", id))
+                    })?;
+
+                let img = image;
                 let (w, h) = img.dimensions();
                 let color_type = img.color();
+
                 log::info!("Image color type is: {:?}", color_type);
 
-                let buf: Vec<u8> = img.into_bytes();
+                let buf = img.into_bytes();
 
                 let image = ImageView::new(ImageInfo::new(color_type.into(), w, h), &buf);
 
-                let gpu = self.gpu();
+                let gpu = &window.context;
                 let gpu_im = GpuImage::from_data(
                     "imvr_gpu_image".into(),
                     &gpu.device,
@@ -71,37 +80,39 @@ impl Context {
                     &image,
                 );
 
-                let window = self
-                    .windows
-                    .iter_mut()
-                    .find(|win| win.id() == window_id.into())
-                    .ok_or(eyre!("No open window matches id: {}", window_id))?;
+                // const WINDOW_NOT_FOUND_CTX = |id| {
+                //     Report::new(GlobalContextError)
+                //             .attach_printable(format!("No open window matches id: {}", id))
+                // };
 
                 window.image = Some(gpu_im);
                 window.uniforms.mark_dirty(true);
                 window.window.request_redraw();
             }
-            Request::Exit => {
-                // join all the processing threads
+            WindowRequest::Exit => {
+                // TODO: join all the processing threads
                 event_loop.exit();
             }
-            Request::Resize { size, window_id } => {
-                log::trace!("imvr: window resized: ({},{})", size.x, size.y);
+            WindowRequest::Resize { size, window_id } => {
+                log::trace!("resize: ({},{})", size.x, size.y);
                 if size.x > 0 && size.y > 0 {
-                    let size = glam::UVec2::from_array([size.x, size.y]);
+                    let size = UVec2::from_array([size.x, size.y]);
                     let _ = self.resize_window(window_id.into(), size);
                 }
             }
-            Request::Redraw { window_id } => {
-                self.render_window(window_id.into()).unwrap();
+            WindowRequest::WindowRedraw { id } => {
+                self.render_window(id.into()).unwrap();
             }
-            Request::OpenWindow { res } => {
+            WindowRequest::OpenWindow { resp } => {
                 let id = self.create_window(event_loop)?;
 
-                res.send(id)
-                    .map_err(|_| eyre!("Reciving end for [`Request::OpenWindow`] doesn't exist"))?;
+                resp.send(id)
+                    .attach_printable_lazy(|| {
+                        format!("Could not send id {id:?} back to requester.")
+                    })
+                    .change_context(GlobalContextError)?;
             }
-            Request::CloseWindow { window_id } => {
+            WindowRequest::CloseWindow { window_id } => {
                 log::debug!("imvr: closing window {}", window_id);
                 let idx = self.index_from_id(window_id).unwrap_or(0);
                 self.windows.remove(idx);
@@ -111,19 +122,22 @@ impl Context {
                     event_loop.exit()
                 }
             }
-            Request::Tick => {}
         }
         Ok(())
     }
 
     /// Creates a new window
-    fn create_window(&mut self, event_loop: &EventLoopWindowTarget<()>) -> Result<u64> {
+    fn create_window(
+        &mut self,
+        event_loop: &ImvrEventLoopHandle,
+    ) -> Result<u64, GlobalContextError> {
         log::debug!("imvr: creating window");
 
-        let (window, gpu) = Window::new(event_loop, "image", self.gpu.take(), &self.instance)?;
-        self.gpu.set(gpu).unwrap();
+        let window = Window::new(event_loop, "image", &self.instance).unwrap();
         let id = window.id().into();
 
+        log::info!("Setting up window");
+        window.window.set_visible(true);
         self.windows.push(window);
 
         log::info!("imvr: created window {}", id);
@@ -138,14 +152,20 @@ impl Context {
     }
 
     /// Resize a window.
-    pub fn resize_window(&mut self, window_id: WindowId, new_size: glam::UVec2) -> Result<()> {
+    pub fn resize_window(
+        &mut self,
+        window_id: WindowId,
+        new_size: UVec2,
+    ) -> Result<(), GlobalContextError> {
         let window = self
             .windows
             .iter_mut()
             .find(|win| win.id() == window_id)
             .unwrap();
 
-        configure_surface(new_size, &window.surface, &self.gpu.get().unwrap().device);
+        window
+            .surface
+            .configure(&window.context.device, &surface_config(new_size));
 
         window.uniforms.mark_dirty(true);
 
@@ -153,7 +173,7 @@ impl Context {
     }
 
     /// Render the contents of a window.
-    pub fn render_window(&mut self, window_id: WindowId) -> Result<()> {
+    pub fn render_window(&mut self, window_id: WindowId) -> Result<(), GlobalContextError> {
         log::info!("STARTING RENDER.");
 
         let window = self
@@ -172,7 +192,7 @@ impl Context {
             .get_current_texture()
             .expect("Failed to acquire next frame");
 
-        let device = &self.gpu.get().unwrap().device;
+        let device = &window.context.device;
         let mut encoder = device.create_command_encoder(&Default::default());
 
         if window.uniforms.is_dirty() {
@@ -194,41 +214,51 @@ impl Context {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &surface,
                     resolve_target: None,
-                    ops: wgpu::Operations { load, store: true },
+                    ops: wgpu::Operations {
+                        load,
+                        store: wgpu::StoreOp::Discard,
+                    },
                 })],
-                depth_stencil_attachment: None,
+                ..Default::default()
             });
 
-            render_pass.set_pipeline(&self.gpu.get().unwrap().window_pipeline);
+            render_pass.set_pipeline(&window.context.window_pipeline);
             render_pass.set_bind_group(0, window.uniforms.bind_group(), &[]);
             render_pass.set_bind_group(1, image.bind_group(), &[]);
             render_pass.draw(0..6, 0..1);
         }
         // --------------- RENDER PASS END ------------------- //
 
-        self.gpu().queue.submit(std::iter::once(encoder.finish()));
+        window
+            .context
+            .queue
+            .submit(std::iter::once(encoder.finish()));
 
         frame.present();
         Ok(())
     }
-
-    fn gpu(&self) -> &GpuContext {
-        self.gpu
-            .get()
-            .expect("This should only be called after the first screen is maade.")
-    }
 }
 
 /// Create a swap chain for a surface.
-fn configure_surface(size: glam::UVec2, surface: &wgpu::Surface, device: &wgpu::Device) {
-    let config = wgpu::SurfaceConfiguration {
+const fn surface_config(size: UVec2) -> wgpu::SurfaceConfiguration {
+    wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format: SWAP_CHAIN_FORMAT,
         width: size.x,
         height: size.y,
         present_mode: wgpu::PresentMode::AutoVsync,
-        alpha_mode: Default::default(),
-        view_formats: Default::default(),
-    };
-    surface.configure(device, &config);
+        alpha_mode: wgpu::CompositeAlphaMode::Auto,
+        view_formats: Vec::new(),
+    }
 }
+
+#[derive(Debug)]
+pub struct GlobalContextError;
+
+impl fmt::Display for GlobalContextError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Error in context.")
+    }
+}
+
+impl Context for GlobalContextError {}

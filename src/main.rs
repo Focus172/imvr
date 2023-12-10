@@ -1,110 +1,60 @@
 #![feature(never_type)]
+#![feature(inline_const)]
+#![feature(const_option)]
+#![feature(yeet_expr)]
 
-mod cli;
-mod ctx;
-mod events;
-mod gpu;
-mod image_info;
-mod prelude;
-mod util;
-mod window;
-
+pub mod logic;
+pub mod prelude;
+pub mod render;
+pub mod task;
+pub mod window;
 // mod mouse;
 
-use futures::StreamExt;
-use std::thread;
+pub type ImvrEventLoop = winit::event_loop::EventLoop<WindowMsg>;
+pub type ImvrEventLoopHandle = winit::event_loop::EventLoopWindowTarget<WindowMsg>;
+pub type ImvrEventLoopProxy = winit::event_loop::EventLoopProxy<WindowMsg>;
 
-use crate::events::EventHandler;
-use crate::image_info::{ImageInfo, ImageView};
 use crate::prelude::*;
 
-use tokio::sync::mpsc::error::TryRecvError;
-use winit::event_loop::{EventLoop, EventLoopProxy};
+#[derive(Debug)]
+struct ImvrError;
+impl fmt::Display for ImvrError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("imvr: encountered an unrecoverable error.")
+    }
+}
+impl Context for ImvrError {}
 
-fn main() -> Result<()> {
-    res::install()?;
-    logger::init();
+fn main() -> Result<(), ImvrError> {
+    // res::install()?;
+    ext::log::init();
 
-    let (tx_req, rx_req) = mpsc::channel(16);
+    let event_loop = winit::event_loop::EventLoopBuilder::with_user_event()
+        .build()
+        .attach_printable("failed to create winit event loop")
+        .change_context(ImvrError)?;
 
-    let event_loop = winit::event_loop::EventLoop::new()?;
     let proxy = event_loop.create_proxy();
 
     // run our tokio rt on a different base thread as the main thread is reserved
-    // for ui on some platforms
-    let tokio = thread::spawn(|| {
+    // for ui on mac
+    let tokio = std::thread::spawn(|| {
         tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(logic_main(tx_req, proxy))
+            .block_on(crate::task::logic(proxy))
     });
 
-    window_main(rx_req, event_loop)?;
+    crate::task::window(event_loop)
+        .attach_printable("window thread panic. this is unrecoverable on MacOs so if you are reaing this good job")
+        .change_context(ImvrError)?;
 
-    log::info!("Waiting on tokio rt");
-    tokio.join().unwrap()?;
+    ext::log::info!("Waiting on tokio rt");
 
-    Ok(())
-}
-
-fn window_main(mut rx_req: mpsc::Receiver<Request>, event_loop: EventLoop<()>) -> Result<()> {
-    let mut context = Context::new()?;
-
-    let mut count: usize = 0;
-    event_loop.run(move |event, event_loop_target| {
-        count += 1;
-        log::info!("start event loop {}", count);
-        log::info!("Event: {:?}", &event);
-
-        let res: Option<Request> = event.try_into().ok().or_else(|| match rx_req.try_recv() {
-            Ok(req) => Some(req),
-            Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => {
-                log::warn!("Exiting Beacuse receiver diconnected.");
-                event_loop_target.exit();
-                None
-            }
-        });
-
-        if let Some(req) = res {
-            log::info!("Handling next request: {:?}", &req);
-            context.handle_request(req, event_loop_target).unwrap();
-        }
-
-        if context.windows.is_empty() {
-            log::warn!("Exiting beacuse no windows are open.");
-            event_loop_target.exit();
-        }
-
-        log::info!("ended event loop {}", count);
-    })?;
-
-    log::warn!("Event Loop Ended.");
-
-    Ok(())
-}
-
-pub type WinitEvent = winit::event::Event<()>;
-
-async fn logic_main(tx: mpsc::Sender<Request>, _event_loop: EventLoopProxy<()>) -> Result<()> {
-    // creates and async task
-    let mut handlrs = EventHandler::new().await;
-
-    loop {
-        log::debug!("Waiting on next event.");
-        tokio::select! {
-            Some(req) = handlrs.next() => {
-                log::info!("New request: {:?}", &req);
-                tx.send(req).await?;
-            }
-            _ = tx.closed() => {
-                break;
-            }
-
-        }
-        // event_loop.send_event(()).unwrap();
-    }
-
-    // tx_req.send(Request::Exit).await?;
+    tokio
+        .join()
+        .expect("tokio runtime paniced.")
+        .attach_printable("event handlrs encountered an error")
+        .change_context(ImvrError)?;
 
     Ok(())
 }

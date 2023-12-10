@@ -1,15 +1,14 @@
-pub mod event;
-pub mod uniforms;
+use crate::{prelude::*, ImvrEventLoopHandle};
 
-use self::uniforms::WindowUniforms;
-
-use crate::gpu::{GpuContext, GpuImage, UniformsBuffer};
-use glam::{Affine2, Vec2};
+use crate::render::gpu::image::GpuImage;
+use crate::render::gpu::{GpuContext, UniformsBuffer};
+use crate::render::uniforms::WindowUniforms;
+use ext::glam::{Affine2, UVec2, Vec2};
 use wgpu::{Color, Instance};
-use winit::event_loop::EventLoopWindowTarget;
 use winit::window::WindowId;
 
 /// Window capable of displaying images using wgpu.
+#[derive(Debug)]
 pub struct Window {
     /// The winit window.
     pub window: winit::window::Window,
@@ -33,21 +32,18 @@ pub struct Window {
     ///
     /// Virtual window space goes from (0, 0) in the top left to (1, 1) in the bottom right.
     pub user_transform: Affine2,
-    // The event handlers for this specific window.
-    // pub event_handlers: Vec<Box<DynWindowEventHandler>>,
+
+    /// The context to the gpu for this image
+    pub context: GpuContext,
 }
-
-use crate::prelude::*;
-
 
 impl Window {
     /// Create a new window.
     pub fn new(
-        event_loop: &EventLoopWindowTarget<()>,
+        event_loop: &ImvrEventLoopHandle,
         title: impl Into<String>,
-        gpu: Option<GpuContext>,
         instance: &Instance,
-    ) -> Result<(Self, GpuContext)> {
+    ) -> Result<Self, WindowError> {
         let window = winit::window::WindowBuilder::new()
             .with_title(title)
             .with_visible(true)
@@ -56,40 +52,37 @@ impl Window {
             // .with_window_icon(Some(Icon::from_rgba(rgba, width, height)))
             // .with_transparent(true)
             // .with_enabled_buttons(WindowButtons::empty())
-            .build(event_loop)?;
+            .build(event_loop)
+            .unwrap();
 
         // window.request_redraw();
         // window.pre_present_notify();
 
-        let surface = unsafe { instance.create_surface(&window) }?;
+        let surface = unsafe { instance.create_surface(&window) }.unwrap();
 
-        let gpu = match gpu {
-            Some(x) => x,
-            None => GpuContext::new(instance, SWAP_CHAIN_FORMAT, &surface)?,
-        };
+        let gpu = GpuContext::new(instance, SWAP_CHAIN_FORMAT, &surface).unwrap();
 
-        let size = glam::UVec2::new(window.inner_size().width, window.inner_size().height);
+        let winit::dpi::PhysicalSize { width, height } = window.inner_size();
+        let size = UVec2::new(width, height);
 
         configure_surface(size, &surface, &gpu.device);
 
         let uniforms = UniformsBuffer::from_value(
             &gpu.device,
-            &WindowUniforms::no_image(),
+            &WindowUniforms::new_empty(),
             &gpu.window_bind_group_layout,
         );
 
-        Ok((
-            Window {
-                window,
-                preserve_aspect_ratio: true,
-                background_color: wgpu::Color::default(),
-                surface,
-                uniforms,
-                image: None,
-                user_transform: Affine2::IDENTITY,
-            },
-            gpu,
-        ))
+        Ok(Window {
+            window,
+            preserve_aspect_ratio: true,
+            background_color: wgpu::Color::default(),
+            surface,
+            uniforms,
+            image: None,
+            user_transform: Affine2::IDENTITY,
+            context: gpu,
+        })
     }
 
     /// Get the window ID.
@@ -102,21 +95,18 @@ impl Window {
         if let Some(image) = &self.image {
             let image_size = image.info().size.as_vec2();
             if !self.preserve_aspect_ratio {
-                WindowUniforms::stretch(image_size).pre_apply_transform(self.user_transform)
+                WindowUniforms::new_stretched(image_size) // .pre_apply_transform(self.user_transform)
             } else {
-                let window_size = glam::UVec2::new(
+                let window_size = UVec2::new(
                     self.window.inner_size().width,
                     self.window.inner_size().height,
                 )
                 .as_vec2();
                 WindowUniforms::fit(window_size, image_size)
-                    .pre_apply_transform(self.user_transform)
+                // .pre_apply_transform(self.user_transform)
             }
         } else {
-            WindowUniforms {
-                transform: self.user_transform,
-                image_size: Vec2::new(0.0, 0.0),
-            }
+            WindowUniforms::new(self.user_transform, Vec2::ZERO)
         }
     }
 }
@@ -124,7 +114,7 @@ impl Window {
 const SWAP_CHAIN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 
 /// Create a swap chain for a surface.
-fn configure_surface(size: glam::UVec2, surface: &wgpu::Surface, device: &wgpu::Device) {
+fn configure_surface(size: UVec2, surface: &wgpu::Surface, device: &wgpu::Device) {
     let config = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format: SWAP_CHAIN_FORMAT,
@@ -137,3 +127,11 @@ fn configure_surface(size: glam::UVec2, surface: &wgpu::Surface, device: &wgpu::
     surface.configure(device, &config);
 }
 
+#[derive(Debug)]
+pub struct WindowError;
+impl fmt::Display for WindowError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Window had an error.")
+    }
+}
+impl Context for WindowError {}
