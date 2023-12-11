@@ -1,6 +1,6 @@
 use crate::{prelude::*, ImvrEventLoopHandle};
 
-use crate::render::gpu::image::GpuImage;
+use crate::render::gpu::image::{GpuImage, ImageInfo, ImageView};
 use crate::render::gpu::{GpuContext, UniformsBuffer};
 use crate::render::uniforms::WindowUniforms;
 use ext::glam::{Affine2, UVec2, Vec2};
@@ -40,8 +40,8 @@ pub struct Window {
 impl Window {
     /// Create a new window.
     pub fn new(
-        event_loop: &ImvrEventLoopHandle,
         title: impl Into<String>,
+        event_loop: &ImvrEventLoopHandle,
         instance: &Instance,
     ) -> Result<Self, WindowError> {
         let window = winit::window::WindowBuilder::new()
@@ -60,12 +60,12 @@ impl Window {
 
         let surface = unsafe { instance.create_surface(&window) }.unwrap();
 
-        let gpu = GpuContext::new(instance, SWAP_CHAIN_FORMAT, &surface).unwrap();
+        let gpu = GpuContext::new(instance, wgpu::TextureFormat::Bgra8Unorm, &surface).unwrap();
 
         let winit::dpi::PhysicalSize { width, height } = window.inner_size();
         let size = UVec2::new(width, height);
 
-        configure_surface(size, &surface, &gpu.device);
+        surface.configure(&gpu.device, &surface_config(size));
 
         let uniforms = UniformsBuffer::from_value(
             &gpu.device,
@@ -86,6 +86,7 @@ impl Window {
     }
 
     /// Get the window ID.
+    #[inline]
     pub fn id(&self) -> WindowId {
         self.window.id()
     }
@@ -109,22 +110,122 @@ impl Window {
             WindowUniforms::new(self.user_transform, Vec2::ZERO)
         }
     }
+
+    /// Resize a window.
+    pub fn resize(&mut self, size: UVec2) {
+        log::trace!("resize: ({},{})", size.x, size.y);
+        debug_assert!(size.x > 0 && size.y > 0);
+
+        // Create a swap chain for a surface.
+        let config = surface_config(size);
+
+        self.surface.configure(&self.context.device, &config);
+
+        self.uniforms.mark_dirty(true);
+    }
+
+    /// Render the contents of a window.
+    pub fn render(&mut self) -> Result<(), WindowError> {
+        log::info!("STARTING RENDER.");
+
+        let window = self;
+
+        let image = match &window.image {
+            Some(x) => x,
+            None => {
+                log::warn!("Skipping render beacuse there is no image for this window");
+                return Ok(());
+            }
+        };
+
+        let frame = window
+            .surface
+            .get_current_texture()
+            .expect("Failed to acquire next frame");
+
+        let device = &window.context.device;
+        let mut encoder = device.create_command_encoder(&Default::default());
+
+        if window.uniforms.is_dirty() {
+            log::trace!("uniforms are dirty.");
+            window
+                .uniforms
+                .update_from(device, &mut encoder, &window.calculate_uniforms());
+        } else {
+            // log::trace!("uniforms are not dirty.");
+        }
+
+        let surface = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        // --------------- RENDER PASS BEGIN ------------------- //
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("render-image"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &surface,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(window.background_color),
+                        store: wgpu::StoreOp::Discard,
+                    },
+                })],
+                ..Default::default()
+            });
+
+            render_pass.set_pipeline(&window.context.window_pipeline);
+            render_pass.set_bind_group(0, window.uniforms.bind_group(), &[]);
+            render_pass.set_bind_group(1, image.bind_group(), &[]);
+            render_pass.draw(0..6, 0..1);
+        }
+        // --------------- RENDER PASS END ------------------- //
+
+        window
+            .context
+            .queue
+            .submit(std::iter::once(encoder.finish()));
+
+        frame.present();
+        Ok(())
+    }
+
+    pub fn set_image(&mut self, image: image::DynamicImage) {
+        use image::GenericImageView;
+
+        let (w, h) = image.dimensions();
+        let color_type = image.color();
+
+        log::info!("Image color type is: {:?}", color_type);
+
+        let buf = image.into_bytes();
+
+        let image = ImageView::new(ImageInfo::new(color_type.into(), w, h), &buf);
+
+        let gpu = &self.context;
+        let gpu_im = GpuImage::from_data(
+            "imvr_gpu_image".into(),
+            &gpu.device,
+            &gpu.image_bind_group_layout,
+            &image,
+        );
+
+        self.image = Some(gpu_im);
+        self.uniforms.mark_dirty(true);
+        self.window.request_redraw();
+    }
 }
 
-const SWAP_CHAIN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
-
-/// Create a swap chain for a surface.
-fn configure_surface(size: UVec2, surface: &wgpu::Surface, device: &wgpu::Device) {
-    let config = wgpu::SurfaceConfiguration {
+/// Create a surface configurations from a size
+const fn surface_config(size: UVec2) -> wgpu::SurfaceConfiguration {
+    wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format: SWAP_CHAIN_FORMAT,
+        format: wgpu::TextureFormat::Bgra8Unorm,
         width: size.x,
         height: size.y,
         present_mode: wgpu::PresentMode::AutoVsync,
-        alpha_mode: Default::default(),
-        view_formats: Default::default(),
-    };
-    surface.configure(device, &config);
+        alpha_mode: wgpu::CompositeAlphaMode::Auto,
+        view_formats: Vec::new(),
+    }
 }
 
 #[derive(Debug)]

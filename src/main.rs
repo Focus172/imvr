@@ -39,9 +39,9 @@ fn main() -> Result<(), ImvrError> {
     // run our tokio rt on a different base thread as the main thread is reserved
     // for ui on mac
     let tokio = std::thread::spawn(|| {
-        tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(crate::task::logic(proxy))
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(crate::task::logic(proxy))
     });
 
     crate::task::window(event_loop)
