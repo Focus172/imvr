@@ -16,13 +16,11 @@ pub fn window(event_loop: ImvrEventLoop) -> Result<(), WindowError> {
     let mut context = GlobalContext::new();
 
     let res = event_loop.run(move |evnt, elwt| {
-        // if let winit::event::Event::UserEvent(ref e) = event {
-        //     log::info!("user event: {:?}", &e);
-        // }
+        if let winit::event::Event::UserEvent(ref e) = evnt {
+            log::info!("user event: {:?}", &e);
+        }
 
         let Some(msg) = evnt.some_into() else { return };
-
-        // log::info!("Handling next request: {:?}", &req);
 
         let res = context.handle(msg, elwt);
 

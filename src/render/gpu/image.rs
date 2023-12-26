@@ -1,5 +1,6 @@
 use crate::prelude::*;
 use ::image::ColorType;
+use image::GenericImageView;
 
 /// Information describing the binary data of an image.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

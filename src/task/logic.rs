@@ -16,7 +16,7 @@ impl fmt::Display for LogicalError {
 
 impl Context for LogicalError {}
 
-pub async fn logic(event_loop: EventLoopProxy<WindowMsg>) -> Result<(), LogicalError> {
+pub async fn logic(elp: EventLoopProxy<WindowMsg>) -> Result<(), LogicalError> {
     // creates an async task
     let mut handlrs = EventHandler::spawn();
 
@@ -24,8 +24,7 @@ pub async fn logic(event_loop: EventLoopProxy<WindowMsg>) -> Result<(), LogicalE
         // log::debug!("Waiting on next event.");
 
         if let Some(msg) = msg.as_window() {
-            event_loop
-                .send_event(msg)
+            elp.send_event(msg)
                 .attach_printable("Failed to send request to render thread.")
                 .change_context(LogicalError)?;
         }

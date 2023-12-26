@@ -2,11 +2,13 @@
 #![feature(inline_const)]
 #![feature(const_option)]
 #![feature(yeet_expr)]
+#![feature(debug_closure_helpers)]
 
 pub mod logic;
 pub mod prelude;
 pub mod render;
 pub mod task;
+pub mod util;
 pub mod window;
 // mod mouse;
 
@@ -26,8 +28,7 @@ impl fmt::Display for ImvrError {
 impl Context for ImvrError {}
 
 fn main() -> Result<(), ImvrError> {
-    // res::install()?;
-    ext::log::init();
+    log::init();
 
     let event_loop = winit::event_loop::EventLoopBuilder::with_user_event()
         .build()
@@ -48,7 +49,7 @@ fn main() -> Result<(), ImvrError> {
         .attach_printable("window thread panic. this is unrecoverable on MacOs so if you are reaing this good job")
         .change_context(ImvrError)?;
 
-    ext::log::info!("Waiting on tokio rt");
+    log::info!("Waiting on tokio rt");
 
     tokio
         .join()

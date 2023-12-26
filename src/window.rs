@@ -189,17 +189,12 @@ impl Window {
         Ok(())
     }
 
-    pub fn set_image(&mut self, image: image::DynamicImage) {
-        use image::GenericImageView;
+    pub fn set_image(&mut self, image: crate::util::RawImage) {
+        let (w, h) = image.size;
 
-        let (w, h) = image.dimensions();
-        let color_type = image.color();
+        log::info!("Image color type is: {:?}", &image.color);
 
-        log::info!("Image color type is: {:?}", color_type);
-
-        let buf = image.into_bytes();
-
-        let image = ImageView::new(ImageInfo::new(color_type.into(), w, h), &buf);
+        let image = ImageView::new(ImageInfo::new(image.color.into(), w, h), &image.data);
 
         let gpu = &self.context;
         let gpu_im = GpuImage::from_data(

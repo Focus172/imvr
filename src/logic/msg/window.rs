@@ -1,7 +1,8 @@
 use crate::prelude::*;
 
+use super::key::Key;
 use super::{Msg, ReturnAddress};
-use crate::logic::event::device::Key;
+use crate::util::RawImage;
 use ext::glam::UVec2;
 use ext::parse::MoveIt;
 use winit::window::WindowId;
@@ -12,7 +13,7 @@ use winit::window::WindowId;
 #[derive(Debug)]
 pub enum WindowMsg {
     Many(Vec<WindowMsg>),
-    ShowImage { image: image::DynamicImage, id: WindowId },
+    ShowImage { image: RawImage, id: WindowId },
     OpenWindow { resp: ReturnAddress },
     CloseWindow { id: WindowId },
     Resize { size: UVec2, id: WindowId },
@@ -26,6 +27,7 @@ impl Msg {
             Msg::ShowImage { path, id } => {
                 let id = id.as_id()?.into();
                 let image = image::open(path).unwrap();
+                let image = image.into();
                 Some(WindowMsg::ShowImage { image, id })
             }
             Msg::OpenWindow { resp } => {

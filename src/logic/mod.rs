@@ -1,4 +1,3 @@
-pub mod event;
 pub mod msg;
 
 mod id;

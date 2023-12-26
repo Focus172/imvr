@@ -1,5 +1,7 @@
 use crate::prelude::*;
 
+// mod event;
+mod key;
 mod source;
 mod terminal;
 mod window;
@@ -28,11 +30,23 @@ impl Msg {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(from = "RawFd")]
 pub enum ReturnAddress {
     Memory(oneshot::Sender<u64>),
     File(RawFd),
+}
+
+impl fmt::Debug for ReturnAddress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Memory(_) => f
+                .debug_tuple("Memory")
+                .field_with(|f| f.debug_struct("Sender").finish_non_exhaustive())
+                .finish(),
+            Self::File(fd) => f.debug_tuple("File").field(fd).finish(),
+        }
+    }
 }
 
 impl ReturnAddress {
