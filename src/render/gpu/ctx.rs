@@ -72,7 +72,7 @@ impl GpuContext {
 /// Get a wgpu device to use.
 async fn get_device(
     instance: &wgpu::Instance,
-    surface: &wgpu::Surface,
+    surface: &wgpu::Surface<'_>,
 ) -> Result<(wgpu::Device, wgpu::Queue), GpuContextError> {
     // Find a suitable display adapter.
     let adapter = instance
@@ -91,8 +91,8 @@ async fn get_device(
         .request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("show-image"),
-                limits: wgpu::Limits::default(),
-                features: wgpu::Features::default(),
+                required_limits: wgpu::Limits::default(),
+                required_features: wgpu::Features::default(),
             },
             None,
         )
@@ -116,7 +116,7 @@ fn create_window_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayo
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
                 has_dynamic_offset: false,
-                min_binding_size: const { Some(NonZeroU64::new(WindowUniforms::SIZE).unwrap()) },
+                min_binding_size: NonZeroU64::new(WindowUniforms::SIZE),
             },
         }],
     })

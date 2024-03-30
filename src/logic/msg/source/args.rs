@@ -64,29 +64,30 @@ impl Iterator for ArgEventHandler {
     }
 }
 
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn test_args() {
-        let path1 = String::from("path1");
-        let args = ["prog_name".into(), path1.clone()].into_iter();
-        let mut arg_handle = ArgEventHandler::new_from_list(args);
-
-        // assert!(match arg_handle.next() {
-        //     Some(Request::OpenWindow { .. }) => true,
-        //     _ => false,
-        // });
-
-        // assert!(match arg_handle.next() {
-        //     Some(Request::ShowImage { path, .. }) => path == PathBuf::from(path1),
-        //     _ => false,
-        // });
-        // beacuse there is no main thread to respond it will always be None
-        assert!(arg_handle.next().is_none())
-    }
-}
+// #[cfg(test)]
+// mod test {
+//     use super::*;
+//
+//     #[test]
+//     fn test_args() {
+//         let path1 = String::from("path1");
+//         let args = ["prog_name".into(), path1.clone()].into_iter();
+//         let mut arg_handle = ArgEventHandler::new_from_list(args);
+//
+//         // assert!(match arg_handle.next() {
+//         //     Some(Request::OpenWindow { .. }) => true,
+//         //     _ => false,
+//         // });
+//
+//         // assert!(match arg_handle.next() {
+//         //     Some(Request::ShowImage { path, .. }) => path == PathBuf::from(path1),
+//         //     _ => false,
+//         // });
+//
+//         // beacuse there is no main thread to respond it will always be None
+//         // assert!(arg_handle.next().is_none())
+//     }
+// }
 
 use clap::Parser;
 

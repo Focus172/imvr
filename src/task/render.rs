@@ -12,10 +12,10 @@ impl fmt::Display for WindowError {
 }
 impl Context for WindowError {}
 
-pub fn window(event_loop: ImvrEventLoop) -> Result<(), WindowError> {
+pub fn window(eloop: ImvrEventLoop) -> Result<(), WindowError> {
     let mut context = GlobalContext::new();
 
-    let res = event_loop.run(move |evnt, elwt| {
+    let res = eloop.run(move |evnt, elwt| {
         if let winit::event::Event::UserEvent(ref e) = evnt {
             log::info!("user event: {:?}", &e);
         }

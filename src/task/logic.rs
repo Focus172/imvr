@@ -1,9 +1,9 @@
-use crate::{
-    logic::msg::{EventHandler, WindowMsg},
-    prelude::*,
-};
+use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 
-use winit::event_loop::EventLoopProxy;
+use crate::logic::msg::EventHandler;
+
+use crate::prelude::*;
 
 #[derive(Debug)]
 pub struct LogicalError;
@@ -16,24 +16,48 @@ impl fmt::Display for LogicalError {
 
 impl Context for LogicalError {}
 
-pub async fn logic(elp: EventLoopProxy<WindowMsg>) -> Result<(), LogicalError> {
-    // creates an async task
-    let mut handlrs = EventHandler::spawn();
+/// Main logic task and root of tokio runtime.
+///
+/// takes a proxy to the event loop and an interupt handle.
+/// when any data is sent on the handle the programe exits
+pub async fn logic(
+    elp: crate::ImvrEventLoopProxy,
+    mut cls: oneshot::Receiver<()>,
+) -> Result<(), LogicalError> {
+    let (tx, mut rx) = mpsc::channel(4);
 
-    while let Some(mut msg) = handlrs.next().await {
-        // log::debug!("Waiting on next event.");
+    // spawns the tasks
+    let mut handlrs = EventHandler::spawn(tx);
 
-        if let Some(msg) = msg.as_window() {
-            elp.send_event(msg)
-                .attach_printable("Failed to send request to render thread.")
-                .change_context(LogicalError)?;
+    loop {
+        // this cant be done with `select` beacuse oneshot's future takes 
+        // ownership
+
+        use tokio::sync::mpsc::error::TryRecvError as MTRE;
+        match rx.try_recv() {
+            Ok(mut msg) => {
+                if let Some(msg) = msg.as_window() {
+                    elp.send_event(msg)
+                        .attach_printable("Failed to send request to render thread.")
+                        .change_context(LogicalError)?;
+                }
+
+                if let Some(_msg) = msg.as_terminal() {
+                    // log::warn!("send {msg:?} to terminal")
+                }
+            }
+            Err(MTRE::Disconnected) => break,
+            Err(MTRE::Empty) => {}
         }
 
-        if let Some(_msg) = msg.as_terminal() {
-            // log::warn!("send {msg:?} to terminal")
+        use tokio::sync::oneshot::error::TryRecvError as OTRE;
+        match cls.try_recv() {
+            Ok(_) | Err(OTRE::Closed) => break,
+            Err(OTRE::Empty) => {}
         }
     }
 
+    rx.close();
     handlrs.close().await.change_context(LogicalError)?;
 
     Ok(())

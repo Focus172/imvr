@@ -1,7 +1,5 @@
 use crate::prelude::*;
 
-use ext::parse::SomeFrom;
-
 impl SomeFrom<Key> for WindowMsg {
     fn some_from(value: Key) -> Option<Self> {
         match value {

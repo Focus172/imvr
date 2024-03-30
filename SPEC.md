@@ -85,6 +85,5 @@ As a server:
 
 ```rust
 pub type WindowEvent = winit::event::Event<WindowMsg>;
-
 ```
 

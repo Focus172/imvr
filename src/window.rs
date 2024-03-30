@@ -11,7 +11,7 @@ use winit::window::WindowId;
 #[derive(Debug)]
 pub struct Window {
     /// The winit window.
-    pub window: winit::window::Window,
+    window: winit::window::Window,
 
     /// If true, preserve the aspect ratio of images.
     pub preserve_aspect_ratio: bool,
@@ -20,7 +20,10 @@ pub struct Window {
     pub background_color: Color,
 
     /// The wgpu surface to render to.
-    pub surface: wgpu::Surface,
+    ///
+    /// The life time here is that this borrows from the window feild
+    /// it will remain valid for as long as the window is valid.
+    pub surface: wgpu::Surface<'static>,
 
     /// The window specific uniforms for the render pipeline.
     pub uniforms: UniformsBuffer<WindowUniforms>,
@@ -35,6 +38,8 @@ pub struct Window {
 
     /// The context to the gpu for this image
     pub context: GpuContext,
+
+    adapter: wgpu::Adapter,
 }
 
 impl Window {
@@ -58,14 +63,24 @@ impl Window {
         // window.request_redraw();
         // window.pre_present_notify();
 
-        let surface = unsafe { instance.create_surface(&window) }.unwrap();
+        let surface = instance.create_surface(&window).unwrap();
+        let surface = unsafe { std::mem::transmute(surface) };
 
         let gpu = GpuContext::new(instance, wgpu::TextureFormat::Bgra8Unorm, &surface).unwrap();
 
-        let winit::dpi::PhysicalSize { width, height } = window.inner_size();
-        let size = UVec2::new(width, height);
+        let a = futures::executor::block_on(
+            instance.request_adapter(&wgpu::RequestAdapterOptions::default()),
+        );
+        let a = a.unwrap();
 
-        surface.configure(&gpu.device, &surface_config(size));
+        let winit::dpi::PhysicalSize { width, height } = window.inner_size();
+        // let size = UVec2::new(width, height);
+
+        let mut config = surface
+            .get_default_config(&a, width, height)
+            .unwrap();
+        config.format = wgpu::TextureFormat::Bgra8Unorm;
+        surface.configure(&gpu.device, &config);
 
         let uniforms = UniformsBuffer::from_value(
             &gpu.device,
@@ -82,6 +97,7 @@ impl Window {
             image: None,
             user_transform: Affine2::IDENTITY,
             context: gpu,
+            adapter: a,
         })
     }
 
@@ -117,8 +133,9 @@ impl Window {
         debug_assert!(size.x > 0 && size.y > 0);
 
         // Create a swap chain for a surface.
-        let config = surface_config(size);
 
+        let mut config = self.surface.get_default_config(&self.adapter, size.x, size.y).unwrap();
+        config.format = wgpu::TextureFormat::Bgra8Unorm;
         self.surface.configure(&self.context.device, &config);
 
         self.uniforms.mark_dirty(true);
@@ -211,17 +228,18 @@ impl Window {
 }
 
 /// Create a surface configurations from a size
-const fn surface_config(size: UVec2) -> wgpu::SurfaceConfiguration {
-    wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format: wgpu::TextureFormat::Bgra8Unorm,
-        width: size.x,
-        height: size.y,
-        present_mode: wgpu::PresentMode::AutoVsync,
-        alpha_mode: wgpu::CompositeAlphaMode::Auto,
-        view_formats: Vec::new(),
-    }
-}
+// const fn surface_config(size: UVec2) -> wgpu::SurfaceConfiguration {
+//     wgpu::SurfaceConfiguration {
+//         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+//         format: wgpu::TextureFormat::Bgra8Unorm,
+//         width: size.x,
+//         height: size.y,
+//         present_mode: wgpu::PresentMode::AutoVsync,
+//         alpha_mode: wgpu::CompositeAlphaMode::Auto,
+//         view_formats: Vec::new(),
+//         desired_maximum_frame_latency: todo!(),
+//     }
+// }
 
 #[derive(Debug)]
 pub struct WindowError;

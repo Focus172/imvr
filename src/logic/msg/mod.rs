@@ -7,11 +7,11 @@ mod terminal;
 mod window;
 
 use serde::Deserialize;
+use tokio::sync::oneshot;
 use std::os::fd::RawFd;
 use std::path::PathBuf;
-use tokio::sync::oneshot;
 
-pub use self::source::{EventHandler, EventSenderError};
+pub use self::source::{EventHandler, EventSendError};
 pub use self::{terminal::TerminalMsg, window::WindowMsg};
 use super::SurfaceId;
 
@@ -42,7 +42,7 @@ impl fmt::Debug for ReturnAddress {
         match self {
             Self::Memory(_) => f
                 .debug_tuple("Memory")
-                .field_with(|f| f.debug_struct("Sender").finish_non_exhaustive())
+                .field(&"oneshot::Sender<u64>")
                 .finish(),
             Self::File(fd) => f.debug_tuple("File").field(fd).finish(),
         }
@@ -55,7 +55,9 @@ impl ReturnAddress {
             ReturnAddress::Memory(s) => s
                 .send(value)
                 .map_err(|_| Report::new(ReturnerError::SenderError)),
-            ReturnAddress::File(f) => do yeet Report::new(ReturnerError::FileError(f)),
+
+            // FIXME: unimplemented
+            ReturnAddress::File(f) => Err(Report::new(ReturnerError::FileError(f))),
         }
     }
 }
